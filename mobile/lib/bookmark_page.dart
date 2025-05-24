@@ -1,15 +1,251 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:provider/provider.dart';
 import 'home_page.dart';
 import 'explore_page.dart';
 import 'notification_page.dart';
 import 'message_page.dart';
 import 'profile_page.dart';
+import 'user_provider.dart';
+import 'models.dart';
+import 'api_service.dart';
 
-class BookmarkPage extends StatelessWidget {
+class BookmarkPage extends StatefulWidget {
   const BookmarkPage({Key? key}) : super(key: key);
 
-  final String profileImage = 'images/me.jpg';
+  @override
+  _BookmarkPageState createState() => _BookmarkPageState();
+}
+
+class _BookmarkPageState extends State<BookmarkPage> {
+  final ApiService _apiService = ApiService();
+  
+  List<Post> _bookmarks = [];
+  bool _isLoading = true;
+  bool _isRefreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBookmarks();
+  }
+
+  Future<void> _loadBookmarks() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final currentUser = userProvider.currentUser;
+      
+      if (currentUser != null) {
+        final bookmarks = await _apiService.getBookmarks(currentUser.id);
+        setState(() {
+          _bookmarks = bookmarks;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      print('Error loading bookmarks: $e');
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _refreshBookmarks() async {
+    setState(() {
+      _isRefreshing = true;
+    });
+
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      await userProvider.refreshBookmarks();
+      await _loadBookmarks();
+    } catch (e) {
+      print('Error refreshing bookmarks: $e');
+    } finally {
+      setState(() {
+        _isRefreshing = false;
+      });
+    }
+  }
+
+  Future<void> _removeBookmark(Post post, int index) async {
+    try {
+      await _apiService.bookmarkPost(post.id);
+      setState(() {
+        _bookmarks.removeAt(index);
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Bookmark dihapus'),
+          backgroundColor: Colors.grey[700],
+          action: SnackBarAction(
+            label: 'Urungkan',
+            textColor: Colors.blue,
+            onPressed: () {
+              _undoRemoveBookmark(post, index);
+            },
+          ),
+        ),
+      );
+    } catch (e) {
+      print('Error removing bookmark: $e');
+    }
+  }
+
+  Future<void> _undoRemoveBookmark(Post post, int index) async {
+    try {
+      await _apiService.bookmarkPost(post.id);
+      setState(() {
+        _bookmarks.insert(index, post);
+      });
+    } catch (e) {
+      print('Error undoing bookmark removal: $e');
+    }
+  }
+
+  Future<void> _likePost(Post post, int index) async {
+    try {
+      final liked = await _apiService.likePost(post.id);
+      setState(() {
+        _bookmarks[index] = Post(
+          id: post.id,
+          userId: post.userId,
+          content: post.content,
+          imageUrl: post.imageUrl,
+          likeCount: liked ? post.likeCount + 1 : post.likeCount - 1,
+          retweetCount: post.retweetCount,
+          replyCount: post.replyCount,
+          createdAt: post.createdAt,
+          updatedAt: post.updatedAt,
+          username: post.username,
+          name: post.name,
+          profileImage: post.profileImage,
+          isVerified: post.isVerified,
+        );
+      });
+    } catch (e) {
+      print('Error liking post: $e');
+    }
+  }
+
+  Future<void> _retweetPost(Post post, int index) async {
+    try {
+      final retweeted = await _apiService.retweetPost(post.id);
+      setState(() {
+        _bookmarks[index] = Post(
+          id: post.id,
+          userId: post.userId,
+          content: post.content,
+          imageUrl: post.imageUrl,
+          likeCount: post.likeCount,
+          retweetCount: retweeted ? post.retweetCount + 1 : post.retweetCount - 1,
+          replyCount: post.replyCount,
+          createdAt: post.createdAt,
+          updatedAt: post.updatedAt,
+          username: post.username,
+          name: post.name,
+          profileImage: post.profileImage,
+          isVerified: post.isVerified,
+        );
+      });
+    } catch (e) {
+      print('Error retweeting post: $e');
+    }
+  }
+
+  Future<void> _replyToPost(Post post) async {
+    final TextEditingController replyController = TextEditingController();
+    
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          backgroundColor: Colors.black,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Container(
+            width: 500,
+            padding: EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    IconButton(
+                      icon: Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                    Spacer(),
+                    Text('Reply to ${post.name}', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+                SizedBox(height: 16),
+                Container(
+                  padding: EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey[800]!),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${post.name} @${post.username}',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      SizedBox(height: 4),
+                      Text(post.content),
+                    ],
+                  ),
+                ),
+                SizedBox(height: 16),
+                TextField(
+                  controller: replyController,
+                  maxLines: 3,
+                  decoration: InputDecoration(
+                    hintText: 'Post your reply',
+                    hintStyle: TextStyle(color: Colors.grey),
+                    border: OutlineInputBorder(),
+                  ),
+                  style: TextStyle(color: Colors.white),
+                ),
+                SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: Text('Cancel'),
+                    ),
+                    SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: () async {
+                        if (replyController.text.isNotEmpty) {
+                          await _apiService.replyToPost(post.id, replyController.text);
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Reply posted!')),
+                          );
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+                      child: Text('Reply'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -33,9 +269,7 @@ class BookmarkPage extends StatelessWidget {
         actions: [
           IconButton(
             icon: Icon(Icons.more_vert),
-            onPressed: () {
-              _showBookmarkOptions(context);
-            },
+            onPressed: () => _showBookmarkOptions(context),
           ),
         ],
       ),
@@ -75,17 +309,20 @@ class BookmarkPage extends StatelessWidget {
                             'Bookmark',
                             style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                           ),
-                          Text(
-                            '@yourusername',
-                            style: TextStyle(color: Colors.grey),
+                          Consumer<UserProvider>(
+                            builder: (context, userProvider, child) {
+                              final user = userProvider.currentUser;
+                              return Text(
+                                '@${user?.username ?? 'unknown'}',
+                                style: TextStyle(color: Colors.grey),
+                              );
+                            },
                           ),
                         ],
                       ),
                       IconButton(
                         icon: Icon(Icons.more_vert),
-                        onPressed: () {
-                          _showBookmarkOptions(context);
-                        },
+                        onPressed: () => _showBookmarkOptions(context),
                         color: Colors.white,
                       ),
                     ],
@@ -111,106 +348,32 @@ class BookmarkPage extends StatelessWidget {
     );
   }
 
-  void _showBookmarkOptions(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.grey[900],
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(20),
-        ),
-      ),
-      builder: (context) {
-        return Container(
-          padding: EdgeInsets.symmetric(vertical: 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: Icon(Icons.delete_outline, color: Colors.white),
-                title: Text('Hapus semua Bookmark', style: TextStyle(color: Colors.white)),
-                onTap: () {
-                  Navigator.pop(context);
-                  // Handle delete all bookmarks
-                },
-              ),
-              ListTile(
-                leading: Icon(Icons.folder_outlined, color: Colors.white),
-                title: Text('Tambahkan Bookmark ke daftar', style: TextStyle(color: Colors.white)),
-                onTap: () {
-                  Navigator.pop(context);
-                  // Handle add bookmarks to list
-                },
-              ),
-              ListTile(
-                leading: Icon(Icons.share, color: Colors.white),
-                title: Text('Bagikan Bookmark', style: TextStyle(color: Colors.white)),
-                onTap: () {
-                  Navigator.pop(context);
-                  // Handle share bookmarks
-                },
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
   Widget _buildBookmarkContent() {
-    // Sample bookmark posts
-    List<Map<String, dynamic>> bookmarks = [
-      {
-        'username': 'Flutter',
-        'handle': '@flutterdev',
-        'content': 'Introducing the latest features in Flutter 3.0! Check out our blog for more details.',
-        'timestamp': '2d',
-        'profileImage': 'images/user1.jpg',
-        'isVerified': true,
-        'likes': 1253,
-        'retweets': 421,
-        'replies': 89,
-      },
-      {
-        'username': 'Google Developers',
-        'handle': '@googledevs',
-        'content': 'Join us for Google I/O next month where we\'ll announce exciting new developer tools and features!',
-        'timestamp': '3d',
-        'profileImage': 'images/user2.jpg',
-        'isVerified': true,
-        'likes': 3521,
-        'retweets': 1025,
-        'replies': 348,
-        'imageUrl': 'images/google_io.jpg',
-      },
-      {
-        'username': 'Android Developers',
-        'handle': '@AndroidDev',
-        'content': 'Learn how to optimize your Android app performance with these tips and tricks from our engineering team.',
-        'timestamp': '5d',
-        'profileImage': 'images/user3.jpg',
-        'isVerified': true,
-        'likes': 892,
-        'retweets': 314,
-        'replies': 67,
-      },
-    ];
+    if (_isLoading) {
+      return Center(child: CircularProgressIndicator(color: Colors.blue));
+    }
 
-    return bookmarks.isEmpty
-        ? _buildEmptyBookmarkState()
-        : ListView.builder(
-            itemCount: bookmarks.length,
-            itemBuilder: (context, index) {
-              final bookmark = bookmarks[index];
-              return _buildBookmarkItem(bookmark);
-            },
-          );
+    if (_bookmarks.isEmpty) {
+      return _buildEmptyBookmarkState();
+    }
+
+    return RefreshIndicator(
+      onRefresh: _refreshBookmarks,
+      color: Colors.blue,
+      child: ListView.builder(
+        itemCount: _bookmarks.length,
+        itemBuilder: (context, index) {
+          final bookmark = _bookmarks[index];
+          return _buildBookmarkItem(bookmark, index);
+        },
+      ),
+    );
   }
 
   Widget _buildEmptyBookmarkState() {
     return Center(
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(Icons.bookmark_border, size: 80, color: Colors.grey),
           SizedBox(height: 20),
@@ -219,17 +382,37 @@ class BookmarkPage extends StatelessWidget {
             style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
           ),
           SizedBox(height: 12),
-          Text(
-            'Ketuk ikon bookmark pada postingan untuk menambahkan ke daftar favorit.',
-            style: TextStyle(color: Colors.grey),
-            textAlign: TextAlign.center,
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: 40),
+            child: Text(
+              'Ketuk ikon bookmark pada postingan untuk menambahkan ke daftar favorit Anda.',
+              style: TextStyle(color: Colors.grey, fontSize: 16),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          SizedBox(height: 20),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (context) => HomeScreen()),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            ),
+            child: Text('Jelajahi Postingan'),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildBookmarkItem(Map<String, dynamic> bookmark) {
+  Widget _buildBookmarkItem(Post bookmark, int index) {
     return Container(
       padding: EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -244,9 +427,21 @@ class BookmarkPage extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CircleAvatar(
-                backgroundImage: AssetImage(bookmark['profileImage']),
-                radius: 20,
+              GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ProfilePage(userId: bookmark.userId),
+                    ),
+                  );
+                },
+                child: CircleAvatar(
+                  backgroundImage: bookmark.profileImage != null
+                      ? NetworkImage('http://localhost:3000/${bookmark.profileImage}')
+                      : AssetImage('images/default_avatar.jpg') as ImageProvider,
+                  radius: 20,
+                ),
               ),
               SizedBox(width: 10),
               Expanded(
@@ -255,35 +450,95 @@ class BookmarkPage extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        Text(
-                          bookmark['username'],
-                          style: TextStyle(fontWeight: FontWeight.bold),
+                        GestureDetector(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => ProfilePage(userId: bookmark.userId),
+                              ),
+                            );
+                          },
+                          child: Text(
+                            bookmark.name ?? 'Unknown User',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
                         ),
-                        if (bookmark['isVerified'])
+                        if (bookmark.isVerified == true)
                           Padding(
                             padding: const EdgeInsets.only(left: 4),
                             child: Icon(Icons.verified, color: Colors.blue, size: 16),
                           ),
                         SizedBox(width: 4),
                         Text(
-                          bookmark['handle'],
+                          '@${bookmark.username ?? 'unknown'}',
                           style: TextStyle(color: Colors.grey),
                         ),
                         Text(
-                          ' · ${bookmark['timestamp']}',
+                          ' · ${_formatTime(bookmark.createdAt)}',
                           style: TextStyle(color: Colors.grey),
+                        ),
+                        Spacer(),
+                        PopupMenuButton<String>(
+                          icon: Icon(Icons.more_horiz, color: Colors.grey, size: 20),
+                          color: Colors.grey[900],
+                          onSelected: (value) => _handlePostAction(value, bookmark, index),
+                          itemBuilder: (BuildContext context) => [
+                            PopupMenuItem(
+                              value: 'remove_bookmark',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.bookmark_remove, color: Colors.white, size: 20),
+                                  SizedBox(width: 12),
+                                  Text('Hapus bookmark', style: TextStyle(color: Colors.white)),
+                                ],
+                              ),
+                            ),
+                            PopupMenuItem(
+                              value: 'share',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.share, color: Colors.white, size: 20),
+                                  SizedBox(width: 12),
+                                  Text('Bagikan postingan', style: TextStyle(color: Colors.white)),
+                                ],
+                              ),
+                            ),
+                            PopupMenuItem(
+                              value: 'copy_link',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.link, color: Colors.white, size: 20),
+                                  SizedBox(width: 12),
+                                  Text('Salin tautan', style: TextStyle(color: Colors.white)),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
                     SizedBox(height: 4),
-                    Text(bookmark['content']),
-                    if (bookmark.containsKey('imageUrl')) ...[
+                    Text(bookmark.content, style: TextStyle(fontSize: 15)),
+                    if (bookmark.imageUrl != null) ...[
                       SizedBox(height: 10),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.asset(
-                          bookmark['imageUrl'],
-                          fit: BoxFit.cover,
+                      GestureDetector(
+                        onTap: () => _showImageDetail(bookmark.imageUrl!),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Image.network(
+                            'http://localhost:3000/${bookmark.imageUrl}',
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                height: 200,
+                                color: Colors.grey[800],
+                                child: Center(
+                                  child: Icon(Icons.broken_image, color: Colors.grey),
+                                ),
+                              );
+                            },
+                          ),
                         ),
                       ),
                     ],
@@ -294,15 +549,18 @@ class BookmarkPage extends StatelessWidget {
                       children: [
                         _buildInteractionIcon(
                           icon: Icons.chat_bubble_outline,
-                          count: bookmark['replies'],
+                          count: bookmark.replyCount,
+                          onTap: () => _replyToPost(bookmark),
                         ),
                         _buildInteractionIcon(
                           icon: Icons.repeat,
-                          count: bookmark['retweets'],
+                          count: bookmark.retweetCount,
+                          onTap: () => _retweetPost(bookmark, index),
                         ),
                         _buildInteractionIcon(
                           icon: Icons.favorite_border,
-                          count: bookmark['likes'],
+                          count: bookmark.likeCount,
+                          onTap: () => _likePost(bookmark, index),
                         ),
                         Row(
                           children: [
@@ -311,9 +569,10 @@ class BookmarkPage extends StatelessWidget {
                               color: Colors.blue,
                               size: 16,
                             ),
+                            SizedBox(width: 8),
                             IconButton(
                               icon: Icon(Icons.share_outlined, color: Colors.grey, size: 16),
-                              onPressed: () {},
+                              onPressed: () => _sharePost(bookmark),
                               constraints: BoxConstraints(),
                               padding: EdgeInsets.symmetric(horizontal: 8),
                             ),
@@ -331,16 +590,289 @@ class BookmarkPage extends StatelessWidget {
     );
   }
 
-  Widget _buildInteractionIcon({required IconData icon, required int count}) {
-    return Row(
-      children: [
-        Icon(icon, color: Colors.grey, size: 16),
-        SizedBox(width: 4),
-        Text(
-          count.toString(),
-          style: TextStyle(color: Colors.grey, fontSize: 12),
+  Widget _buildInteractionIcon({
+    required IconData icon,
+    required int count,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Row(
+          children: [
+            Icon(icon, color: Colors.grey, size: 16),
+            SizedBox(width: 4),
+            Text(
+              _formatCount(count),
+              style: TextStyle(color: Colors.grey, fontSize: 12),
+            ),
+          ],
         ),
-      ],
+      ),
+    );
+  }
+
+  void _handlePostAction(String action, Post bookmark, int index) {
+    switch (action) {
+      case 'remove_bookmark':
+        _removeBookmark(bookmark, index);
+        break;
+      case 'share':
+        _sharePost(bookmark);
+        break;
+      case 'copy_link':
+        _copyPostLink(bookmark);
+        break;
+    }
+  }
+
+  void _sharePost(Post bookmark) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Share functionality will be implemented')),
+    );
+  }
+
+  void _copyPostLink(Post bookmark) {
+    // Implement copy to clipboard
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Link copied to clipboard')),
+    );
+  }
+
+  void _showImageDetail(String imageUrl) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          child: GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: InteractiveViewer(
+              child: Image.network(
+                'http://localhost:3000/$imageUrl',
+                fit: BoxFit.contain,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showBookmarkOptions(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return Container(
+          padding: EdgeInsets.symmetric(vertical: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: Icon(Icons.delete_outline, color: Colors.white),
+                title: Text('Hapus semua Bookmark', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showDeleteAllConfirmation();
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.folder_outlined, color: Colors.white),
+                title: Text('Tambahkan Bookmark ke daftar', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showCreateListDialog();
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.share, color: Colors.white),
+                title: Text('Bagikan Bookmark', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _shareBookmarks();
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.sort, color: Colors.white),
+                title: Text('Urutkan Bookmark', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showSortOptions();
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showDeleteAllConfirmation() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: Colors.grey[900],
+          title: Text('Hapus Semua Bookmark?', style: TextStyle(color: Colors.white)),
+          content: Text(
+            'Tindakan ini tidak dapat dibatalkan. Semua bookmark akan dihapus permanen.',
+            style: TextStyle(color: Colors.grey),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Batal', style: TextStyle(color: Colors.blue)),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                await _deleteAllBookmarks();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              child: Text('Hapus Semua'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _deleteAllBookmarks() async {
+    try {
+      // Remove all bookmarks one by one
+      for (final bookmark in _bookmarks) {
+        await _apiService.bookmarkPost(bookmark.id);
+      }
+      
+      setState(() {
+        _bookmarks.clear();
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Semua bookmark telah dihapus')),
+      );
+    } catch (e) {
+      print('Error deleting all bookmarks: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Gagal menghapus bookmark'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  void _showCreateListDialog() {
+    final TextEditingController listNameController = TextEditingController();
+    
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: Colors.grey[900],
+          title: Text('Buat Daftar Bookmark', style: TextStyle(color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: listNameController,
+                decoration: InputDecoration(
+                  hintText: 'Nama daftar',
+                  hintStyle: TextStyle(color: Colors.grey),
+                  border: OutlineInputBorder(),
+                ),
+                style: TextStyle(color: Colors.white),
+              ),
+              SizedBox(height: 16),
+              Text(
+                'Fitur daftar bookmark akan segera tersedia.',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Batal', style: TextStyle(color: Colors.blue)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Fitur daftar bookmark akan segera tersedia')),
+                );
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+              child: Text('Buat'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _shareBookmarks() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Share bookmarks functionality will be implemented')),
+    );
+  }
+
+  void _showSortOptions() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: Colors.grey[900],
+          title: Text('Urutkan Bookmark', style: TextStyle(color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                title: Text('Terbaru', style: TextStyle(color: Colors.white)),
+                leading: Radio(
+                  value: 'newest',
+                  groupValue: 'newest',
+                  onChanged: (value) {},
+                  activeColor: Colors.blue,
+                ),
+              ),
+              ListTile(
+                title: Text('Terlama', style: TextStyle(color: Colors.white)),
+                leading: Radio(
+                  value: 'oldest',
+                  groupValue: 'newest',
+                  onChanged: (value) {},
+                  activeColor: Colors.blue,
+                ),
+              ),
+              ListTile(
+                title: Text('Paling Disukai', style: TextStyle(color: Colors.white)),
+                leading: Radio(
+                  value: 'most_liked',
+                  groupValue: 'newest',
+                  onChanged: (value) {},
+                  activeColor: Colors.blue,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Tutup', style: TextStyle(color: Colors.blue)),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -350,10 +882,7 @@ class BookmarkPage extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 10),
       decoration: BoxDecoration(
         border: Border(
-          right: BorderSide(
-            color: Colors.grey[800]!,
-            width: 0.5,
-          ),
+          right: BorderSide(color: Colors.grey[800]!, width: 0.5),
         ),
       ),
       child: Column(
@@ -366,7 +895,6 @@ class BookmarkPage extends StatelessWidget {
           ),
           const SizedBox(height: 22),
           
-          // Home
           _buildNavButton(
             icon: Icons.home,
             isActive: false,
@@ -379,7 +907,6 @@ class BookmarkPage extends StatelessWidget {
           ),
           const SizedBox(height: 22),
           
-          // Explore
           _buildNavButton(
             icon: Icons.search,
             isActive: false,
@@ -392,7 +919,6 @@ class BookmarkPage extends StatelessWidget {
           ),
           const SizedBox(height: 22),
           
-          // Notifications
           _buildNavButton(
             icon: Icons.notifications_outlined,
             isActive: false,
@@ -405,7 +931,6 @@ class BookmarkPage extends StatelessWidget {
           ),
           const SizedBox(height: 22),
           
-          // Messages
           _buildNavButton(
             icon: Icons.mail_outline,
             isActive: false,
@@ -418,17 +943,13 @@ class BookmarkPage extends StatelessWidget {
           ),
           const SizedBox(height: 22),
           
-          // Bookmarks
           _buildNavButton(
             icon: Icons.bookmark_border,
             isActive: true,
-            onTap: () {
-              // Already on Bookmarks page
-            },
+            onTap: () {},
           ),
           const SizedBox(height: 22),
           
-          // Profile
           _buildNavButton(
             icon: Icons.person_outline,
             isActive: false,
@@ -439,23 +960,10 @@ class BookmarkPage extends StatelessWidget {
               );
             },
           ),
-          const SizedBox(height: 22),
-          
-          // More
-          _buildNavButton(
-            icon: Icons.more_horiz,
-            isActive: false,
-            onTap: () {
-              // Show more options menu
-            },
-          ),
           const SizedBox(height: 20),
           
-          // Post button
           ElevatedButton(
-            onPressed: () {
-              // Show post dialog
-            },
+            onPressed: () {},
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.blue,
               shape: RoundedRectangleBorder(
@@ -469,15 +977,16 @@ class BookmarkPage extends StatelessWidget {
           
           const Spacer(),
           
-          // Profile avatar
-          GestureDetector(
-            onTap: () {
-              // Show profile menu
+          Consumer<UserProvider>(
+            builder: (context, userProvider, child) {
+              final user = userProvider.currentUser;
+              return CircleAvatar(
+                radius: 18,
+                backgroundImage: user?.profileImage != null 
+                  ? NetworkImage('http://localhost:3000/${user!.profileImage}')
+                  : AssetImage('images/default_avatar.jpg') as ImageProvider,
+              );
             },
-            child: CircleAvatar(
-              radius: 18,
-              backgroundImage: AssetImage(profileImage),
-            ),
           ),
           const SizedBox(height: 20),
         ],
@@ -538,9 +1047,7 @@ class BookmarkPage extends StatelessWidget {
             ),
             IconButton(
               icon: Icon(Icons.show_chart, color: Colors.grey, size: 26),
-              onPressed: () {
-                // Show Trends
-              },
+              onPressed: () {},
             ),
             IconButton(
               icon: Icon(Icons.notifications_outlined, color: Colors.grey, size: 26),
@@ -569,9 +1076,61 @@ class BookmarkPage extends StatelessWidget {
   Widget _buildRightSidebar() {
     return Column(
       children: [
-        // Premium Box
+        // Bookmark stats
         Container(
           margin: EdgeInsets.all(16),
+          padding: EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.grey[900],
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Statistik Bookmark',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+              SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Total bookmark:', style: TextStyle(color: Colors.grey)),
+                  Text(
+                    '${_bookmarks.length}',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Dengan gambar:', style: TextStyle(color: Colors.grey)),
+                  Text(
+                    '${_bookmarks.where((b) => b.imageUrl != null).length}',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Bulan ini:', style: TextStyle(color: Colors.grey)),
+                  Text(
+                    '${_getThisMonthBookmarks()}',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        
+        // Premium Box
+        Container(
+          margin: EdgeInsets.symmetric(horizontal: 16),
           padding: EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: Colors.grey[900],
@@ -586,7 +1145,7 @@ class BookmarkPage extends StatelessWidget {
               ),
               SizedBox(height: 8),
               Text(
-                'Dapatkan fitur-fitur eksklusif dengan berlangganan Premium.',
+                'Dapatkan fitur bookmark lanjutan dan organisasi yang lebih baik.',
                 style: TextStyle(color: Colors.grey),
               ),
               SizedBox(height: 12),
@@ -604,88 +1163,42 @@ class BookmarkPage extends StatelessWidget {
             ],
           ),
         ),
-        
-        // Who to follow
-        Container(
-          margin: EdgeInsets.symmetric(horizontal: 16),
-          padding: EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.grey[900],
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Untuk Diikuti',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-              ),
-              SizedBox(height: 16),
-              _buildFollowSuggestion(
-                'Flutter Dev', 
-                '@flutterdev', 
-                'images/user1.jpg'
-              ),
-              Divider(color: Colors.grey[800], height: 16),
-              _buildFollowSuggestion(
-                'Dart Lang', 
-                '@dart_lang', 
-                'images/user2.jpg'
-              ),
-              Divider(color: Colors.grey[800], height: 16),
-              _buildFollowSuggestion(
-                'Android Dev', 
-                '@AndroidDev', 
-                'images/user3.jpg'
-              ),
-              SizedBox(height: 16),
-              Text(
-                'Tampilkan lebih banyak',
-                style: TextStyle(color: Colors.blue),
-              ),
-            ],
-          ),
-        ),
       ],
     );
   }
 
-  Widget _buildFollowSuggestion(String name, String username, String image) {
-    return Row(
-      children: [
-        CircleAvatar(
-          backgroundImage: AssetImage(image),
-          radius: 20,
-        ),
-        SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                name,
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              Text(
-                username,
-                style: TextStyle(color: Colors.grey),
-              ),
-            ],
-          ),
-        ),
-        TextButton(
-          onPressed: () {},
-          style: TextButton.styleFrom(
-            backgroundColor: Colors.white,
-            foregroundColor: Colors.black,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          ),
-          child: Text('Ikuti'),
-        ),
-      ],
-    );
+  int _getThisMonthBookmarks() {
+    final now = DateTime.now();
+    return _bookmarks.where((bookmark) {
+      return bookmark.createdAt.year == now.year && 
+             bookmark.createdAt.month == now.month;
+    }).length;
+  }
+
+  String _formatTime(DateTime dateTime) {
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+
+    if (difference.inDays > 7) {
+      return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
+    } else if (difference.inDays > 0) {
+      return '${difference.inDays}h';
+    } else if (difference.inHours > 0) {
+      return '${difference.inHours}j';
+    } else if (difference.inMinutes > 0) {
+      return '${difference.inMinutes}m';
+    } else {
+      return 'baru saja';
+    }
+  }
+
+  String _formatCount(int count) {
+    if (count >= 1000000) {
+      return '${(count / 1000000).toStringAsFixed(1)}M';
+    } else if (count >= 1000) {
+      return '${(count / 1000).toStringAsFixed(1)}K';
+    } else {
+      return count.toString();
+    }
   }
 }

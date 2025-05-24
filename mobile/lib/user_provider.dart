@@ -9,6 +9,8 @@ class UserProvider with ChangeNotifier {
   List<XNotification> _notifications = [];
   List<Message> _messages = [];
   List<Post> _bookmarks = [];
+  List<User> _suggestedUsers = [];
+  List<String> _trendingTopics = [];
   bool _isLoading = false;
   String? _error;
 
@@ -18,13 +20,16 @@ class UserProvider with ChangeNotifier {
   List<XNotification> get notifications => _notifications;
   List<Message> get messages => _messages;
   List<Post> get bookmarks => _bookmarks;
+  List<User> get suggestedUsers => _suggestedUsers;
+  List<String> get trendingTopics => _trendingTopics;
   bool get isLoading => _isLoading;
   String? get error => _error;
   bool get isLoggedIn => _currentUser != null;
 
   final ApiService _apiService = ApiService();
 
-  // Authentication
+  // =================== AUTHENTICATION ===================
+
   Future<bool> login(String username, String password) async {
     _setLoading(true);
     try {
@@ -72,11 +77,14 @@ class UserProvider with ChangeNotifier {
   }
 
   Future<void> logout() async {
+    await _apiService.logout();
     _currentUser = null;
     _posts.clear();
     _notifications.clear();
     _messages.clear();
     _bookmarks.clear();
+    _suggestedUsers.clear();
+    _trendingTopics.clear();
     await _clearUserSession();
     notifyListeners();
   }
@@ -102,7 +110,108 @@ class UserProvider with ChangeNotifier {
     }
   }
 
-  // Data Loading
+  // =================== USER PROFILE ===================
+
+  void updateCurrentUser(User user) {
+    _currentUser = user;
+    notifyListeners();
+  }
+
+  Future<bool> updateProfile({
+    String? name,
+    String? bio,
+    String? location,
+    String? website,
+  }) async {
+    if (_currentUser == null) return false;
+
+    try {
+      final updatedUser = await _apiService.updateUserProfile(
+        _currentUser!.id,
+        name: name,
+        bio: bio,
+        location: location,
+        website: website,
+      );
+
+      if (updatedUser != null) {
+        _currentUser = updatedUser;
+        notifyListeners();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      print('Error updating profile: $e');
+      return false;
+    }
+  }
+
+  Future<bool> uploadProfileImage(String imagePath) async {
+    if (_currentUser == null) return false;
+
+    try {
+      final imageUrl = await _apiService.uploadProfileImage(File(imagePath));
+      if (imageUrl != null) {
+        _currentUser = User(
+          id: _currentUser!.id,
+          username: _currentUser!.username,
+          email: _currentUser!.email,
+          name: _currentUser!.name,
+          bio: _currentUser!.bio,
+          location: _currentUser!.location,
+          website: _currentUser!.website,
+          profileImage: imageUrl,
+          bannerImage: _currentUser!.bannerImage,
+          isVerified: _currentUser!.isVerified,
+          followerCount: _currentUser!.followerCount,
+          followingCount: _currentUser!.followingCount,
+          createdAt: _currentUser!.createdAt,
+          updatedAt: _currentUser!.updatedAt,
+        );
+        notifyListeners();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      print('Error uploading profile image: $e');
+      return false;
+    }
+  }
+
+  Future<bool> uploadBannerImage(String imagePath) async {
+    if (_currentUser == null) return false;
+
+    try {
+      final imageUrl = await _apiService.uploadBannerImage(File(imagePath));
+      if (imageUrl != null) {
+        _currentUser = User(
+          id: _currentUser!.id,
+          username: _currentUser!.username,
+          email: _currentUser!.email,
+          name: _currentUser!.name,
+          bio: _currentUser!.bio,
+          location: _currentUser!.location,
+          website: _currentUser!.website,
+          profileImage: _currentUser!.profileImage,
+          bannerImage: imageUrl,
+          isVerified: _currentUser!.isVerified,
+          followerCount: _currentUser!.followerCount,
+          followingCount: _currentUser!.followingCount,
+          createdAt: _currentUser!.createdAt,
+          updatedAt: _currentUser!.updatedAt,
+        );
+        notifyListeners();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      print('Error uploading banner image: $e');
+      return false;
+    }
+  }
+
+  // =================== DATA LOADING ===================
+
   Future<void> loadUserData() async {
     if (_currentUser == null) return;
     
@@ -111,6 +220,8 @@ class UserProvider with ChangeNotifier {
       loadNotifications(),
       loadMessages(),
       loadBookmarks(),
+      loadSuggestedUsers(),
+      loadTrendingTopics(),
     ]);
   }
 
@@ -156,12 +267,33 @@ class UserProvider with ChangeNotifier {
     }
   }
 
-  // Post Actions
+  Future<void> loadSuggestedUsers() async {
+    if (_currentUser == null) return;
+    
+    try {
+      _suggestedUsers = await _apiService.getSuggestedUsers(_currentUser!.id);
+      notifyListeners();
+    } catch (e) {
+      print('Error loading suggested users: $e');
+    }
+  }
+
+  Future<void> loadTrendingTopics() async {
+    try {
+      _trendingTopics = await _apiService.getTrendingTopics();
+      notifyListeners();
+    } catch (e) {
+      print('Error loading trending topics: $e');
+    }
+  }
+
+  // =================== POST ACTIONS ===================
+
   Future<bool> createPost(String content, {String? imageUrl}) async {
     if (_currentUser == null) return false;
     
     try {
-      final post = await _apiService.createPost(_currentUser!.id, content, imageUrl: imageUrl);
+      final post = await _apiService.createPost(content, imageUrl: imageUrl);
       if (post != null) {
         _posts.insert(0, post);
         notifyListeners();
@@ -178,7 +310,7 @@ class UserProvider with ChangeNotifier {
     if (_currentUser == null) return false;
     
     try {
-      final liked = await _apiService.likePost(_currentUser!.id, postId);
+      final liked = await _apiService.likePost(postId);
       
       // Update local post data
       final postIndex = _posts.indexWhere((post) => post.id == postId);
@@ -213,7 +345,7 @@ class UserProvider with ChangeNotifier {
     if (_currentUser == null) return false;
     
     try {
-      final retweeted = await _apiService.retweetPost(_currentUser!.id, postId);
+      final retweeted = await _apiService.retweetPost(postId);
       
       // Update local post data
       final postIndex = _posts.indexWhere((post) => post.id == postId);
@@ -248,7 +380,7 @@ class UserProvider with ChangeNotifier {
     if (_currentUser == null) return false;
     
     try {
-      final reply = await _apiService.replyToPost(_currentUser!.id, postId, content);
+      final reply = await _apiService.replyToPost(postId, content);
       if (reply != null) {
         // Update local post reply count
         final postIndex = _posts.indexWhere((post) => post.id == postId);
@@ -284,12 +416,14 @@ class UserProvider with ChangeNotifier {
     if (_currentUser == null) return false;
     
     try {
-      final bookmarked = await _apiService.bookmarkPost(_currentUser!.id, postId);
+      final bookmarked = await _apiService.bookmarkPost(postId);
       
       if (bookmarked) {
-        // Add to bookmarks list
-        final post = _posts.firstWhere((p) => p.id == postId);
-        _bookmarks.insert(0, post);
+        // Add to bookmarks list if not already there
+        final post = _posts.firstWhere((p) => p.id == postId, orElse: () => null);
+        if (post != null && !_bookmarks.any((b) => b.id == postId)) {
+          _bookmarks.insert(0, post);
+        }
       } else {
         // Remove from bookmarks list
         _bookmarks.removeWhere((post) => post.id == postId);
@@ -303,12 +437,13 @@ class UserProvider with ChangeNotifier {
     }
   }
 
-  // User Actions
+  // =================== USER ACTIONS ===================
+
   Future<bool> followUser(int userId) async {
     if (_currentUser == null) return false;
     
     try {
-      final followed = await _apiService.followUser(_currentUser!.id, userId);
+      final followed = await _apiService.followUser(userId);
       
       if (followed) {
         // Update current user's following count
@@ -387,7 +522,7 @@ class UserProvider with ChangeNotifier {
     if (_currentUser == null) return false;
     
     try {
-      return await _apiService.isFollowing(_currentUser!.id, userId);
+      return await _apiService.isFollowing(userId);
     } catch (e) {
       print('Error checking follow status: $e');
       return false;
@@ -412,12 +547,13 @@ class UserProvider with ChangeNotifier {
     }
   }
 
-  // Message Actions
+  // =================== MESSAGE ACTIONS ===================
+
   Future<bool> sendMessage(int receiverId, String content) async {
     if (_currentUser == null) return false;
     
     try {
-      final message = await _apiService.sendMessage(_currentUser!.id, receiverId, content);
+      final message = await _apiService.sendMessage(receiverId, content);
       if (message != null) {
         _messages.insert(0, message);
         notifyListeners();
@@ -430,7 +566,19 @@ class UserProvider with ChangeNotifier {
     }
   }
 
-  // Notification Actions
+  Future<List<Message>> getConversationMessages(int otherUserId) async {
+    if (_currentUser == null) return [];
+    
+    try {
+      return await _apiService.getConversationMessages(_currentUser!.id, otherUserId);
+    } catch (e) {
+      print('Error getting conversation messages: $e');
+      return [];
+    }
+  }
+
+  // =================== NOTIFICATION ACTIONS ===================
+
   Future<void> markNotificationAsRead(int notificationId) async {
     try {
       await _apiService.markNotificationAsRead(notificationId);
@@ -471,28 +619,8 @@ class UserProvider with ChangeNotifier {
     }
   }
 
-  // Explore/Trending
-  Future<List<String>> getTrendingTopics() async {
-    try {
-      return await _apiService.getTrendingTopics();
-    } catch (e) {
-      print('Error getting trending topics: $e');
-      return [];
-    }
-  }
+  // =================== HELPER METHODS ===================
 
-  Future<List<User>> getSuggestedUsers() async {
-    if (_currentUser == null) return [];
-    
-    try {
-      return await _apiService.getSuggestedUsers(_currentUser!.id);
-    } catch (e) {
-      print('Error getting suggested users: $e');
-      return [];
-    }
-  }
-
-  // Helper methods
   void _setLoading(bool loading) {
     _isLoading = loading;
     notifyListeners();
@@ -515,7 +643,8 @@ class UserProvider with ChangeNotifier {
     await prefs.remove('user_id');
   }
 
-  // Refresh methods
+  // =================== REFRESH METHODS ===================
+
   Future<void> refreshPosts() async {
     await loadPosts();
   }
@@ -532,7 +661,64 @@ class UserProvider with ChangeNotifier {
     await loadBookmarks();
   }
 
+  Future<void> refreshSuggestedUsers() async {
+    await loadSuggestedUsers();
+  }
+
+  Future<void> refreshTrendingTopics() async {
+    await loadTrendingTopics();
+  }
+
   Future<void> refreshAll() async {
     await loadUserData();
+  }
+
+  // =================== UTILITY METHODS ===================
+
+  Post? getPostById(int postId) {
+    try {
+      return _posts.firstWhere((post) => post.id == postId);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  bool isPostLiked(int postId) {
+    // This would need to be tracked separately or fetched from API
+    // For now, return false as a placeholder
+    return false;
+  }
+
+  bool isPostBookmarked(int postId) {
+    return _bookmarks.any((post) => post.id == postId);
+  }
+
+  bool isUserFollowed(int userId) {
+    // This would need to be tracked separately or fetched from API
+    // For now, return false as a placeholder
+    return false;
+  }
+
+  void clearError() {
+    _error = null;
+    notifyListeners();
+  }
+
+  // =================== SEARCH AND FILTER ===================
+
+  List<Post> getPostsByUser(int userId) {
+    return _posts.where((post) => post.userId == userId).toList();
+  }
+
+  List<Post> getPostsWithMedia() {
+    return _posts.where((post) => post.imageUrl != null).toList();
+  }
+
+  List<XNotification> getUnreadNotifications() {
+    return _notifications.where((notification) => !notification.isRead).toList();
+  }
+
+  List<Message> getRecentMessages() {
+    return _messages.take(10).toList();
   }
 }

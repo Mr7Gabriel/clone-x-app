@@ -1,17 +1,26 @@
 import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
 import 'dart:convert';
+import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'models.dart';
 
 class ApiService {
   static final ApiService _instance = ApiService._internal();
   factory ApiService() => _instance;
-  ApiService._internal();
+  ApiService._internal() {
+    _dio = Dio(BaseOptions(
+      baseUrl: baseUrl,
+      connectTimeout: Duration(seconds: 30),
+      receiveTimeout: Duration(seconds: 30),
+    ));
+  }
 
   // Base URL for your backend server
   static const String baseUrl = 'http://localhost:3000/api';
   
   String? _authToken;
+  late Dio _dio;
 
   // Get stored auth token
   Future<String?> _getAuthToken() async {
@@ -62,7 +71,8 @@ class ApiService {
     }
   }
 
-  // Authentication Methods
+  // =================== AUTHENTICATION METHODS ===================
+
   Future<User?> login(String username, String password) async {
     try {
       final response = await http.post(
@@ -115,7 +125,100 @@ class ApiService {
     await _clearAuthToken();
   }
 
-  // Post Methods
+  // =================== FILE UPLOAD METHODS ===================
+
+  Future<String?> uploadProfileImage(File imageFile) async {
+    try {
+      final token = await _getAuthToken();
+      if (token == null) return null;
+
+      FormData formData = FormData.fromMap({
+        'profileImage': await MultipartFile.fromFile(
+          imageFile.path,
+          filename: 'profile_${DateTime.now().millisecondsSinceEpoch}.jpg',
+        ),
+      });
+
+      final response = await _dio.post(
+        '/upload/profile-image',
+        data: formData,
+        options: Options(
+          headers: {'Authorization': 'Bearer $token'},
+        ),
+      );
+
+      if (response.statusCode == 200 && response.data['success'] == true) {
+        return response.data['image_url'];
+      }
+      return null;
+    } catch (e) {
+      print('Upload profile image error: $e');
+      return null;
+    }
+  }
+
+  Future<String?> uploadBannerImage(File imageFile) async {
+    try {
+      final token = await _getAuthToken();
+      if (token == null) return null;
+
+      FormData formData = FormData.fromMap({
+        'bannerImage': await MultipartFile.fromFile(
+          imageFile.path,
+          filename: 'banner_${DateTime.now().millisecondsSinceEpoch}.jpg',
+        ),
+      });
+
+      final response = await _dio.post(
+        '/upload/banner-image',
+        data: formData,
+        options: Options(
+          headers: {'Authorization': 'Bearer $token'},
+        ),
+      );
+
+      if (response.statusCode == 200 && response.data['success'] == true) {
+        return response.data['image_url'];
+      }
+      return null;
+    } catch (e) {
+      print('Upload banner image error: $e');
+      return null;
+    }
+  }
+
+  Future<String?> uploadPostImage(File imageFile) async {
+    try {
+      final token = await _getAuthToken();
+      if (token == null) return null;
+
+      FormData formData = FormData.fromMap({
+        'postImage': await MultipartFile.fromFile(
+          imageFile.path,
+          filename: 'post_${DateTime.now().millisecondsSinceEpoch}.jpg',
+        ),
+      });
+
+      final response = await _dio.post(
+        '/upload/post-image',
+        data: formData,
+        options: Options(
+          headers: {'Authorization': 'Bearer $token'},
+        ),
+      );
+
+      if (response.statusCode == 200 && response.data['success'] == true) {
+        return response.data['image_url'];
+      }
+      return null;
+    } catch (e) {
+      print('Upload post image error: $e');
+      return null;
+    }
+  }
+
+  // =================== POST METHODS ===================
+
   Future<List<Post>> getPosts({int limit = 20, int offset = 0}) async {
     try {
       final response = await http.get(
@@ -135,7 +238,7 @@ class ApiService {
     }
   }
 
-  Future<Post?> createPost(int userId, String content, {String? imageUrl}) async {
+  Future<Post?> createPost(String content, {String? imageUrl}) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/posts'),
@@ -157,7 +260,7 @@ class ApiService {
     }
   }
 
-  Future<bool> likePost(int userId, int postId) async {
+  Future<bool> likePost(int postId) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/posts/$postId/like'),
@@ -175,7 +278,7 @@ class ApiService {
     }
   }
 
-  Future<bool> retweetPost(int userId, int postId) async {
+  Future<bool> retweetPost(int postId) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/posts/$postId/retweet'),
@@ -193,7 +296,7 @@ class ApiService {
     }
   }
 
-  Future<Reply?> replyToPost(int userId, int postId, String content) async {
+  Future<Reply?> replyToPost(int postId, String content) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/posts/$postId/replies'),
@@ -233,7 +336,8 @@ class ApiService {
     }
   }
 
-  // User Methods
+  // =================== USER METHODS ===================
+
   Future<List<User>> searchUsers(String query) async {
     try {
       final response = await http.get(
@@ -289,6 +393,35 @@ class ApiService {
     }
   }
 
+  Future<User?> updateUserProfile(int userId, {
+    String? name,
+    String? bio,
+    String? location,
+    String? website,
+  }) async {
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/users/$userId'),
+        headers: await _getHeaders(needsAuth: true),
+        body: json.encode({
+          'name': name,
+          'bio': bio,
+          'location': location,
+          'website': website,
+        }),
+      );
+
+      final data = _handleResponse(response);
+      if (data != null && data['success'] == true) {
+        return User.fromMap(data['user']);
+      }
+      return null;
+    } catch (e) {
+      print('Update user profile error: $e');
+      return null;
+    }
+  }
+
   Future<List<Post>> getUserPosts(int userId) async {
     try {
       final response = await http.get(
@@ -308,8 +441,9 @@ class ApiService {
     }
   }
 
-  // Follow Methods
-  Future<bool> followUser(int followerId, int followingId) async {
+  // =================== FOLLOW METHODS ===================
+
+  Future<bool> followUser(int followingId) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/users/$followingId/follow'),
@@ -327,7 +461,7 @@ class ApiService {
     }
   }
 
-  Future<bool> isFollowing(int followerId, int followingId) async {
+  Future<bool> isFollowing(int followingId) async {
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/users/$followingId/is-following'),
@@ -383,8 +517,9 @@ class ApiService {
     }
   }
 
-  // Bookmark Methods
-  Future<bool> bookmarkPost(int userId, int postId) async {
+  // =================== BOOKMARK METHODS ===================
+
+  Future<bool> bookmarkPost(int postId) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/posts/$postId/bookmark'),
@@ -421,7 +556,7 @@ class ApiService {
     }
   }
 
-  Future<bool> isBookmarked(int userId, int postId) async {
+  Future<bool> isBookmarked(int postId) async {
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/posts/$postId/is-bookmarked'),
@@ -439,7 +574,8 @@ class ApiService {
     }
   }
 
-  // Notification Methods
+  // =================== NOTIFICATION METHODS ===================
+
   Future<List<XNotification>> getNotifications(int userId) async {
     try {
       final response = await http.get(
@@ -488,7 +624,8 @@ class ApiService {
     }
   }
 
-  // Message Methods
+  // =================== MESSAGE METHODS ===================
+
   Future<List<Message>> getMessages(int userId) async {
     try {
       final response = await http.get(
@@ -508,7 +645,26 @@ class ApiService {
     }
   }
 
-  Future<Message?> sendMessage(int senderId, int receiverId, String content) async {
+  Future<List<Message>> getConversationMessages(int userId, int otherUserId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/users/$userId/messages/$otherUserId'),
+        headers: await _getHeaders(needsAuth: true),
+      );
+
+      final data = _handleResponse(response);
+      if (data != null && data['success'] == true) {
+        final messagesData = data['messages'] as List;
+        return messagesData.map((messageData) => Message.fromMap(messageData)).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Get conversation messages error: $e');
+      return [];
+    }
+  }
+
+  Future<Message?> sendMessage(int receiverId, String content) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/messages'),
@@ -530,7 +686,8 @@ class ApiService {
     }
   }
 
-  // Trending/Explore Methods
+  // =================== TRENDING/EXPLORE METHODS ===================
+
   Future<List<String>> getTrendingTopics() async {
     try {
       final response = await http.get(
@@ -569,7 +726,8 @@ class ApiService {
     }
   }
 
-  // Health check
+  // =================== HEALTH CHECK ===================
+
   Future<bool> isServerHealthy() async {
     try {
       final response = await http.get(

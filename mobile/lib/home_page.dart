@@ -1,10 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:provider/provider.dart';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
 import 'profile_page.dart';
 import 'explore_page.dart';
 import 'notification_page.dart';
 import 'message_page.dart';
 import 'bookmark_page.dart';
+import 'user_provider.dart';
+import 'models.dart';
+import 'api_service.dart';
 
 void main() {
   runApp(const XCloneApp());
@@ -24,28 +30,175 @@ class XCloneApp extends StatelessWidget {
   }
 }
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
-  final String profileImage = 'images/me.jpg'; // Gambar profil akun kamu
+  @override
+  _HomeScreenState createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  final ApiService _apiService = ApiService();
+  List<Post> _posts = [];
+  bool _isLoading = true;
+  bool _isRefreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    _loadPosts();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadPosts() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final posts = await _apiService.getPosts();
+      setState(() {
+        _posts = posts;
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('Error loading posts: $e');
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _refreshPosts() async {
+    setState(() {
+      _isRefreshing = true;
+    });
+
+    try {
+      final posts = await _apiService.getPosts();
+      setState(() {
+        _posts = posts;
+        _isRefreshing = false;
+      });
+    } catch (e) {
+      print('Error refreshing posts: $e');
+      setState(() {
+        _isRefreshing = false;
+      });
+    }
+  }
+
+  Future<void> _createPost(String content, {String? imageUrl}) async {
+    try {
+      final post = await _apiService.createPost(content, imageUrl: imageUrl);
+      if (post != null) {
+        setState(() {
+          _posts.insert(0, post);
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Post created successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      print('Error creating post: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to create post'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _likePost(int postId, int index) async {
+    try {
+      final liked = await _apiService.likePost(postId);
+      setState(() {
+        final post = _posts[index];
+        _posts[index] = Post(
+          id: post.id,
+          userId: post.userId,
+          content: post.content,
+          imageUrl: post.imageUrl,
+          likeCount: liked ? post.likeCount + 1 : post.likeCount - 1,
+          retweetCount: post.retweetCount,
+          replyCount: post.replyCount,
+          createdAt: post.createdAt,
+          updatedAt: post.updatedAt,
+          username: post.username,
+          name: post.name,
+          profileImage: post.profileImage,
+          isVerified: post.isVerified,
+        );
+      });
+    } catch (e) {
+      print('Error liking post: $e');
+    }
+  }
+
+  Future<void> _retweetPost(int postId, int index) async {
+    try {
+      final retweeted = await _apiService.retweetPost(postId);
+      setState(() {
+        final post = _posts[index];
+        _posts[index] = Post(
+          id: post.id,
+          userId: post.userId,
+          content: post.content,
+          imageUrl: post.imageUrl,
+          likeCount: post.likeCount,
+          retweetCount: retweeted ? post.retweetCount + 1 : post.retweetCount - 1,
+          replyCount: post.replyCount,
+          createdAt: post.createdAt,
+          updatedAt: post.updatedAt,
+          username: post.username,
+          name: post.name,
+          profileImage: post.profileImage,
+          isVerified: post.isVerified,
+        );
+      });
+    } catch (e) {
+      print('Error retweeting post: $e');
+    }
+  }
+
+  Future<void> _bookmarkPost(int postId) async {
+    try {
+      final bookmarked = await _apiService.bookmarkPost(postId);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(bookmarked ? 'Post bookmarked!' : 'Bookmark removed!'),
+          backgroundColor: bookmarked ? Colors.green : Colors.grey,
+        ),
+      );
+    } catch (e) {
+      print('Error bookmarking post: $e');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    // Cek lebar layar untuk menentukan layout
     final screenWidth = MediaQuery.of(context).size.width;
     final isMobile = screenWidth < 600;
 
     if (isMobile) {
-      // Tampilan untuk mobile
-      return mobileLayout(context);
+      return _buildMobileLayout(context);
     } else {
-      // Tampilan untuk desktop
-      return desktopLayout(context);
+      return _buildDesktopLayout(context);
     }
   }
 
-  // Layout untuk tampilan mobile - sesuai Image 2
-  Widget mobileLayout(BuildContext context) {
+  Widget _buildMobileLayout(BuildContext context) {
     return DefaultTabController(
       length: 2,
       child: Scaffold(
@@ -56,6 +209,7 @@ class HomeScreen extends StatelessWidget {
             backgroundColor: Colors.black,
             elevation: 0,
             bottom: TabBar(
+              controller: _tabController,
               tabs: [
                 Tab(text: "For you"),
                 Tab(text: "Following"),
@@ -67,91 +221,19 @@ class HomeScreen extends StatelessWidget {
             ),
           ),
         ),
-        body: const TabBarView(
+        body: TabBarView(
+          controller: _tabController,
           children: [
-            PostListView(),
+            _buildPostsList(),
             Center(
-              child: Text("Belum ada postingan di 'Following'"),
+              child: Text("Following posts will be implemented soon"),
             ),
           ],
         ),
-        // Bottom navigation sesuai Image 2
-        bottomNavigationBar: BottomAppBar(
-          color: Colors.black,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                IconButton(
-                  icon: Icon(Icons.home, color: Colors.blue, size: 26),
-                  onPressed: () {
-                    // Sudah di Home
-                  },
-                ),
-                IconButton(
-                  icon: Icon(Icons.search, color: Colors.grey, size: 26),
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (context) => ExplorePage(),
-                      ),
-                    );
-                  },
-                ),
-                IconButton(
-                  icon: Icon(Icons.show_chart, color: Colors.grey, size: 26),
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (context) => const TrendsScreen(),
-                      ),
-                    );
-                  },
-                ),
-                IconButton(
-                  icon: Stack(
-                    children: [
-                      Icon(Icons.notifications_outlined, color: Colors.grey, size: 26),
-                      Positioned(
-                        right: 0,
-                        top: 0,
-                        child: Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.blue,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (context) => const NotificationPage(),
-                      ),
-                    );
-                  },
-                ),
-                IconButton(
-                  icon: Icon(Icons.mail_outline, color: Colors.grey, size: 26),
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (context) => const MessagePage(),
-                      ),
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-        ),
+        bottomNavigationBar: _buildMobileBottomNav(context),
         floatingActionButton: FloatingActionButton(
           onPressed: () {
-            _showPostDialog(context, profileImage);
+            _showPostDialog(context);
           },
           backgroundColor: Colors.blue,
           child: Icon(Icons.add),
@@ -160,8 +242,7 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  // Layout untuk tampilan desktop - sesuai Image 1
-  Widget desktopLayout(BuildContext context) {
+  Widget _buildDesktopLayout(BuildContext context) {
     return DefaultTabController(
       length: 2,
       child: Scaffold(
@@ -169,158 +250,10 @@ class HomeScreen extends StatelessWidget {
         body: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Side navigation bar dengan fungsionalitas
-            Container(
-              width: 70,
-              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 10),
-              decoration: BoxDecoration(
-                border: Border(
-                  right: BorderSide(
-                    color: Colors.grey[800]!,
-                    width: 0.5,
-                  ),
-                ),
-              ),
-              child: Column(
-                children: [
-                  // Logo X
-                  SvgPicture.asset(
-                    'images/x_logo_2023.png',
-                    width: 30,
-                    color: Colors.white,
-                  ),
-                  const SizedBox(height: 22),
-                  
-                  // Home button
-                  _buildSideNavButton(
-                    icon: Icons.home,
-                    isActive: true, // Asumsikan ini adalah halaman saat ini
-                    onTap: () {
-                      // Sudah di halaman home - tidak perlu navigasi
-                    },
-                  ),
-                  const SizedBox(height: 22),
-                  
-                  // Search button
-                  _buildSideNavButton(
-                    icon: Icons.search,
-                    isActive: false,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => ExplorePage(), 
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 25),
-                  
-                  // Notifications button
-                  _buildSideNavButton(
-                    icon: Icons.notifications_outlined,
-                    isActive: false,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => NotificationPage(), 
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 25),
-                  
-                  // Messages button
-                  _buildSideNavButton(
-                    icon: Icons.mail_outline,
-                    isActive: false,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => MessagePage(),
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 22),
-                  
-                  // Bookmarks button
-                  _buildSideNavButton(
-                    icon: Icons.bookmark_border,
-                    isActive: false,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => BookmarkPage(),
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 22),
-                  
-                  // Profile button
-                  _buildSideNavButton(
-                    icon: Icons.person_outline,
-                    isActive: false,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => const ProfilePage(),
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 22),
-                  
-                  // More button
-                  _buildSideNavButton(
-                    icon: Icons.more_horiz,
-                    isActive: false,
-                    onTap: () {
-                      _showMoreMenu(context);
-                    },
-                  ),
-                  const SizedBox(height: 20),
-                  
-                  // Post button
-                  ElevatedButton(
-                    onPressed: () {
-                      _showPostDialog(context, profileImage);
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(30),
-                      ),
-                      minimumSize: Size(60, 60),
-                      padding: EdgeInsets.zero,
-                    ),
-                    child: Icon(Icons.add, color: Colors.white, size: 30),
-                  ),
-                  
-                  const Spacer(),
-                  
-                  // Profile avatar
-                  GestureDetector(
-                    onTap: () {
-                      _showProfileMenu(context);
-                    },
-                    child: Container(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.grey[800]!, width: 1),
-                      ),
-                      child: CircleAvatar(
-                        radius: 18,
-                        backgroundImage: AssetImage(profileImage),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                ],
-              ),
-            ),
+            // Side navigation bar
+            _buildSideNav(context),
             
-            // Main feed section - sesuai Image 1
+            // Main feed section
             Expanded(
               flex: 2,
               child: Column(
@@ -335,6 +268,7 @@ class HomeScreen extends StatelessWidget {
                       ),
                     ),
                     child: TabBar(
+                      controller: _tabController,
                       tabs: [
                         Tab(text: "Untuk Anda"),
                         Tab(text: "Mengikuti"),
@@ -346,92 +280,17 @@ class HomeScreen extends StatelessWidget {
                     ),
                   ),
                   
-                  // Input posting area - sesuai Image 1
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                    decoration: BoxDecoration(
-                      border: Border(
-                        bottom: BorderSide(
-                          color: Colors.grey[800]!,
-                          width: 0.5,
-                        ),
-                      ),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        CircleAvatar(
-                          backgroundImage: AssetImage(profileImage),
-                          radius: 20,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                "Apa yang sedang terjadi?",
-                                style: TextStyle(
-                                  color: Colors.grey[400],
-                                  fontSize: 18,
-                                ),
-                              ),
-                              const SizedBox(height: 15),
-                              Row(
-                                children: [
-                                  Icon(Icons.image, color: Colors.blue, size: 20),
-                                  const SizedBox(width: 10),
-                                  Icon(Icons.gif_box, color: Colors.blue, size: 20),
-                                  const SizedBox(width: 10),
-                                  Icon(Icons.bar_chart, color: Colors.blue, size: 20),
-                                  const SizedBox(width: 10),
-                                  Icon(Icons.emoji_emotions_outlined, color: Colors.blue, size: 20),
-                                  const SizedBox(width: 10),
-                                  Icon(Icons.calendar_today, color: Colors.blue, size: 20),
-                                  const SizedBox(width: 10),
-                                  Icon(Icons.location_on, color: Colors.grey, size: 20),
-                                  const Spacer(),
-                                  ElevatedButton(
-                                    onPressed: () {
-                                      _showPostDialog(context, profileImage);
-                                    },
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.grey[700],
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(20),
-                                      ),
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 20,
-                                        vertical: 10,
-                                      ),
-                                    ),
-                                    child: const Text(
-                                      "Posting",
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  // Input posting area
+                  _buildCreatePostSection(),
                   
                   // Post list
-                  const Expanded(
+                  Expanded(
                     child: TabBarView(
+                      controller: _tabController,
                       children: [
-                        PostListView(),
+                        _buildPostsList(),
                         Center(
-                          child: Text("Belum ada postingan di 'Mengikuti'"),
+                          child: Text("Following posts will be implemented soon"),
                         ),
                       ],
                     ),
@@ -440,63 +299,11 @@ class HomeScreen extends StatelessWidget {
               ),
             ),
             
-            // Right sidebar - perbaikan agar bisa di-scroll
+            // Right sidebar
             if (MediaQuery.of(context).size.width > 1000)
               Container(
                 width: 350,
-                child: Column(
-                  children: [
-                    // Bagian search bar (tetap di atas)
-                    Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[900],
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(Icons.search, color: Colors.grey),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                "Cari",
-                                style: TextStyle(color: Colors.grey),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    
-                    // Bagian konten yang bisa di-scroll
-                    Expanded(
-                      child: SingleChildScrollView(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Premium box
-                              PremiumBox(),
-                              const SizedBox(height: 16),
-                              
-                              // Trending section
-                              TrendingWidget(),
-                              const SizedBox(height: 16),
-                              
-                              // Other widgets
-                              FollowSuggestions(),
-                              const SizedBox(height: 16),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                child: _buildRightSidebar(),
               ),
           ],
         ),
@@ -504,8 +311,717 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  // Helper method to build sidenav buttons
-  Widget _buildSideNavButton({
+  Widget _buildCreatePostSection() {
+    return Consumer<UserProvider>(
+      builder: (context, userProvider, child) {
+        final user = userProvider.currentUser;
+        if (user == null) return SizedBox();
+
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: Colors.grey[800]!, width: 0.5),
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CircleAvatar(
+                backgroundImage: user.profileImage != null 
+                  ? NetworkImage('http://localhost:3000/${user.profileImage}')
+                  : AssetImage('images/default_avatar.jpg') as ImageProvider,
+                radius: 20,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Apa yang sedang terjadi?",
+                      style: TextStyle(color: Colors.grey[400], fontSize: 18),
+                    ),
+                    const SizedBox(height: 15),
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: Icon(Icons.image, color: Colors.blue, size: 20),
+                          onPressed: () => _showPostDialog(context),
+                        ),
+                        Icon(Icons.gif_box, color: Colors.blue, size: 20),
+                        const SizedBox(width: 10),
+                        Icon(Icons.bar_chart, color: Colors.blue, size: 20),
+                        const SizedBox(width: 10),
+                        Icon(Icons.emoji_emotions_outlined, color: Colors.blue, size: 20),
+                        const SizedBox(width: 10),
+                        Icon(Icons.calendar_today, color: Colors.blue, size: 20),
+                        const SizedBox(width: 10),
+                        Icon(Icons.location_on, color: Colors.grey, size: 20),
+                        const Spacer(),
+                        ElevatedButton(
+                          onPressed: () => _showPostDialog(context),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.grey[700],
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                          ),
+                          child: const Text(
+                            "Posting",
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPostsList() {
+    if (_isLoading) {
+      return Center(
+        child: CircularProgressIndicator(color: Colors.blue),
+      );
+    }
+
+    if (_posts.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.timeline, size: 64, color: Colors.grey),
+            SizedBox(height: 16),
+            Text(
+              'No posts yet',
+              style: TextStyle(fontSize: 18, color: Colors.grey),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Be the first to post something!',
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: _refreshPosts,
+      color: Colors.blue,
+      child: ListView.builder(
+        padding: EdgeInsets.zero,
+        itemCount: _posts.length,
+        itemBuilder: (context, index) {
+          final post = _posts[index];
+          return _buildPostCard(post, index);
+        },
+      ),
+    );
+  }
+
+  Widget _buildPostCard(Post post, int index) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: Colors.grey[800]!, width: 0.5),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CircleAvatar(
+              backgroundImage: post.profileImage != null 
+                ? NetworkImage('http://localhost:3000/${post.profileImage}')
+                : AssetImage('images/default_avatar.jpg') as ImageProvider,
+              radius: 20,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // User info row
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          post.name ?? 'Unknown User',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (post.isVerified == true)
+                        Padding(
+                          padding: EdgeInsets.only(left: 4),
+                          child: Icon(Icons.verified, color: Colors.blue, size: 15),
+                        ),
+                      SizedBox(width: 4),
+                      Text(
+                        '@${post.username ?? 'unknown'}',
+                        style: TextStyle(color: Colors.grey, fontSize: 14),
+                      ),
+                      Text(
+                        " · ${_formatTime(post.createdAt)}",
+                        style: TextStyle(color: Colors.grey, fontSize: 14),
+                      ),
+                      Spacer(),
+                      IconButton(
+                        icon: Icon(Icons.more_horiz, color: Colors.grey, size: 20),
+                        onPressed: () => _showPostOptions(context, post),
+                      ),
+                    ],
+                  ),
+                  
+                  const SizedBox(height: 8),
+                  
+                  // Content
+                  Text(
+                    post.content,
+                    style: TextStyle(fontSize: 15),
+                  ),
+                  
+                  // Image if any
+                  if (post.imageUrl != null) ...[
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.network(
+                        'http://localhost:3000/${post.imageUrl}',
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            height: 200,
+                            color: Colors.grey[800],
+                            child: Center(
+                              child: Icon(Icons.broken_image, color: Colors.grey),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                  
+                  const SizedBox(height: 12),
+                  
+                  // Interaction icons
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildInteractionButton(
+                        icon: Icons.chat_bubble_outline,
+                        count: post.replyCount,
+                        onTap: () => _showReplyDialog(context, post),
+                      ),
+                      _buildInteractionButton(
+                        icon: Icons.repeat,
+                        count: post.retweetCount,
+                        onTap: () => _retweetPost(post.id, index),
+                        color: Colors.green,
+                      ),
+                      _buildInteractionButton(
+                        icon: Icons.favorite_border,
+                        count: post.likeCount,
+                        onTap: () => _likePost(post.id, index),
+                        color: Colors.red,
+                      ),
+                      Row(
+                        children: [
+                          IconButton(
+                            icon: Icon(Icons.bookmark_border, color: Colors.grey, size: 18),
+                            onPressed: () => _bookmarkPost(post.id),
+                          ),
+                          IconButton(
+                            icon: Icon(Icons.share_outlined, color: Colors.grey, size: 18),
+                            onPressed: () => _sharePost(post),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInteractionButton({
+    required IconData icon,
+    required int count,
+    required VoidCallback onTap,
+    Color color = Colors.grey,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 18),
+            SizedBox(width: 4),
+            Text(
+              _formatCount(count),
+              style: TextStyle(color: Colors.grey, fontSize: 13),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showPostDialog(BuildContext context) {
+    final TextEditingController contentController = TextEditingController();
+    File? selectedImage;
+    
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return Dialog(
+              backgroundColor: Colors.black,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Container(
+                width: 500,
+                padding: EdgeInsets.all(20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: Icon(Icons.close, color: Colors.white),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                        Spacer(),
+                        Text(
+                          'Draft',
+                          style: TextStyle(color: Colors.blue),
+                        ),
+                      ],
+                    ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Consumer<UserProvider>(
+                          builder: (context, userProvider, child) {
+                            final user = userProvider.currentUser;
+                            return CircleAvatar(
+                              backgroundImage: user?.profileImage != null 
+                                ? NetworkImage('http://localhost:3000/${user!.profileImage}')
+                                : AssetImage('images/default_avatar.jpg') as ImageProvider,
+                              radius: 20,
+                            );
+                          },
+                        ),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            children: [
+                              TextField(
+                                controller: contentController,
+                                maxLines: 5,
+                                decoration: InputDecoration(
+                                  hintText: 'Apa yang sedang terjadi?',
+                                  hintStyle: TextStyle(color: Colors.grey),
+                                  border: InputBorder.none,
+                                ),
+                                style: TextStyle(color: Colors.white),
+                              ),
+                              if (selectedImage != null) ...[
+                                SizedBox(height: 10),
+                                Stack(
+                                  children: [
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: Image.file(
+                                        selectedImage!,
+                                        height: 200,
+                                        width: double.infinity,
+                                        fit: BoxFit.cover,
+                                      ),
+                                    ),
+                                    Positioned(
+                                      top: 8,
+                                      right: 8,
+                                      child: GestureDetector(
+                                        onTap: () {
+                                          setState(() {
+                                            selectedImage = null;
+                                          });
+                                        },
+                                        child: Container(
+                                          padding: EdgeInsets.all(4),
+                                          decoration: BoxDecoration(
+                                            color: Colors.black.withOpacity(0.7),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: Icon(Icons.close, color: Colors.white, size: 16),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    Divider(color: Colors.grey[800]),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            IconButton(
+                              icon: Icon(Icons.image, color: Colors.blue),
+                              onPressed: () async {
+                                final ImagePicker picker = ImagePicker();
+                                final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+                                if (image != null) {
+                                  setState(() {
+                                    selectedImage = File(image.path);
+                                  });
+                                }
+                              },
+                            ),
+                            IconButton(
+                              icon: Icon(Icons.gif_box, color: Colors.blue),
+                              onPressed: () {},
+                            ),
+                            IconButton(
+                              icon: Icon(Icons.poll, color: Colors.blue),
+                              onPressed: () {},
+                            ),
+                            IconButton(
+                              icon: Icon(Icons.emoji_emotions, color: Colors.blue),
+                              onPressed: () {},
+                            ),
+                          ],
+                        ),
+                        ElevatedButton(
+                          onPressed: contentController.text.isNotEmpty || selectedImage != null
+                            ? () async {
+                                String? imageUrl;
+                                
+                                // Upload image if selected
+                                if (selectedImage != null) {
+                                  imageUrl = await _apiService.uploadPostImage(selectedImage!);
+                                }
+                                
+                                // Create post
+                                await _createPost(contentController.text, imageUrl: imageUrl);
+                                Navigator.pop(context);
+                              }
+                            : null,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                          ),
+                          child: Text('Posting'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showReplyDialog(BuildContext context, Post post) {
+    final TextEditingController replyController = TextEditingController();
+    
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          backgroundColor: Colors.black,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Container(
+            width: 500,
+            padding: EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    IconButton(
+                      icon: Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                    Spacer(),
+                    Text('Reply to ${post.name}', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+                SizedBox(height: 16),
+                // Original post
+                Container(
+                  padding: EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey[800]!),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${post.name} @${post.username}',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      SizedBox(height: 4),
+                      Text(post.content),
+                    ],
+                  ),
+                ),
+                SizedBox(height: 16),
+                // Reply input
+                TextField(
+                  controller: replyController,
+                  maxLines: 3,
+                  decoration: InputDecoration(
+                    hintText: 'Post your reply',
+                    hintStyle: TextStyle(color: Colors.grey),
+                    border: OutlineInputBorder(
+                      borderSide: BorderSide(color: Colors.grey[800]!),
+                    ),
+                  ),
+                  style: TextStyle(color: Colors.white),
+                ),
+                SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: Text('Cancel'),
+                    ),
+                    SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: () async {
+                        if (replyController.text.isNotEmpty) {
+                          await _apiService.replyToPost(post.id, replyController.text);
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Reply posted!')),
+                          );
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                      ),
+                      child: Text('Reply'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showPostOptions(BuildContext context, Post post) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return Container(
+          padding: EdgeInsets.symmetric(vertical: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: Icon(Icons.bookmark_border, color: Colors.white),
+                title: Text('Bookmark Post', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _bookmarkPost(post.id);
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.share, color: Colors.white),
+                title: Text('Share Post', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _sharePost(post);
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.copy, color: Colors.white),
+                title: Text('Copy Link', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(context);
+                  // Copy link functionality
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _sharePost(Post post) {
+    // Share functionality
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Share functionality will be implemented')),
+    );
+  }
+
+  Widget _buildSideNav(BuildContext context) {
+    return Container(
+      width: 70,
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 10),
+      decoration: BoxDecoration(
+        border: Border(
+          right: BorderSide(color: Colors.grey[800]!, width: 0.5),
+        ),
+      ),
+      child: Column(
+        children: [
+          // Logo
+          SvgPicture.asset(
+            'images/x_logo_2023.png',
+            width: 30,
+            color: Colors.white,
+          ),
+          const SizedBox(height: 22),
+          
+          _buildNavButton(
+            icon: Icons.home,
+            isActive: true,
+            onTap: () {},
+          ),
+          const SizedBox(height: 22),
+          
+          _buildNavButton(
+            icon: Icons.search,
+            isActive: false,
+            onTap: () {
+              Navigator.pushReplacement(
+                context, 
+                MaterialPageRoute(builder: (context) => ExplorePage())
+              );
+            },
+          ),
+          const SizedBox(height: 25),
+          
+          _buildNavButton(
+            icon: Icons.notifications_outlined,
+            isActive: false,
+            onTap: () {
+              Navigator.pushReplacement(
+                context, 
+                MaterialPageRoute(builder: (context) => NotificationPage())
+              );
+            },
+          ),
+          const SizedBox(height: 25),
+          
+          _buildNavButton(
+            icon: Icons.mail_outline,
+            isActive: false,
+            onTap: () {
+              Navigator.pushReplacement(
+                context, 
+                MaterialPageRoute(builder: (context) => MessagePage())
+              );
+            },
+          ),
+          const SizedBox(height: 22),
+          
+          _buildNavButton(
+            icon: Icons.bookmark_border,
+            isActive: false,
+            onTap: () {
+              Navigator.pushReplacement(
+                context, 
+                MaterialPageRoute(builder: (context) => BookmarkPage())
+              );
+            },
+          ),
+          const SizedBox(height: 22),
+          
+          _buildNavButton(
+            icon: Icons.person_outline,
+            isActive: false,
+            onTap: () {
+              Navigator.pushReplacement(
+                context, 
+                MaterialPageRoute(builder: (context) => ProfilePage())
+              );
+            },
+          ),
+          const SizedBox(height: 20),
+          
+          ElevatedButton(
+            onPressed: () => _showPostDialog(context),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(30),
+              ),
+              minimumSize: Size(60, 60),
+              padding: EdgeInsets.zero,
+            ),
+            child: Icon(Icons.add, color: Colors.white, size: 30),
+          ),
+          
+          const Spacer(),
+          
+          Consumer<UserProvider>(
+            builder: (context, userProvider, child) {
+              final user = userProvider.currentUser;
+              return GestureDetector(
+                onTap: () => _showProfileMenu(context),
+                child: CircleAvatar(
+                  radius: 18,
+                  backgroundImage: user?.profileImage != null 
+                    ? NetworkImage('http://localhost:3000/${user!.profileImage}')
+                    : AssetImage('images/default_avatar.jpg') as ImageProvider,
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNavButton({
     required IconData icon,
     required bool isActive,
     required VoidCallback onTap,
@@ -529,1561 +1045,429 @@ class HomeScreen extends StatelessWidget {
       ),
     );
   }
-}
 
-// Show more menu dialog
-void _showMoreMenu(BuildContext context) {
-  showDialog(
-    context: context,
-    builder: (context) {
-      return Dialog(
-        backgroundColor: Colors.black,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: Colors.grey[800]!, width: 1),
-        ),
-        child: Container(
-          width: 300,
-          padding: EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildMoreMenuItem(
-                'Premium', 
-                Icons.workspace_premium, 
-                () {
-                  Navigator.pop(context);
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (context) => const PremiumScreen(),
-                    ),
-                  );
-                }
-              ),
-              _buildMoreMenuItem(
-                'Pengaturan dan Privasi', 
-                Icons.settings, 
-                () {
-                  Navigator.pop(context);
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (context) => const SettingsScreen(),
-                    ),
-                  );
-                }
-              ),
-              _buildMoreMenuItem(
-                'Bantuan', 
-                Icons.help_outline, 
-                () {
-                  Navigator.pop(context);
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (context) => const HelpScreen(),
-                    ),
-                  );
-                }
-              ),
-            ],
-          ),
-        ),
-      );
-    },
-  );
-}
-
-// Helper method to build more menu items
-Widget _buildMoreMenuItem(String title, IconData icon, VoidCallback onTap) {
-  return InkWell(
-    onTap: onTap,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12.0),
-      child: Row(
-        children: [
-          Icon(icon, color: Colors.white),
-          SizedBox(width: 16),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.white,
+  Widget _buildMobileBottomNav(BuildContext context) {
+    return BottomAppBar(
+      color: Colors.black,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8.0),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            IconButton(
+              icon: Icon(Icons.home, color: Colors.blue, size: 26),
+              onPressed: () {},
             ),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
-// Show profile menu dialog
-void _showProfileMenu(BuildContext context) {
-  showDialog(
-    context: context,
-    builder: (context) {
-      return Dialog(
-        backgroundColor: Colors.black,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: Colors.grey[800]!, width: 1),
-        ),
-        child: Container(
-          width: 300,
-          padding: EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ListTile(
-                leading: CircleAvatar(
-                  backgroundImage: AssetImage('images/me.jpg'),
-                ),
-                title: Text('Your Name', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                subtitle: Text('@yourusername', style: TextStyle(color: Colors.grey)),
-                trailing: Icon(Icons.check_circle, color: Colors.blue),
-              ),
-              Divider(color: Colors.grey[800]),
-              _buildProfileMenuItem(
-                'Tambahkan akun yang ada', 
-                () {
-                  Navigator.pop(context);
-                  // Handle add existing account
-                }
-              ),
-              _buildProfileMenuItem(
-                'Kelola Akun', 
-                () {
-                  Navigator.pop(context);
-                  // Handle manage accounts
-                }
-              ),
-              _buildProfileMenuItem(
-                'Keluar', 
-                () {
-                  Navigator.pop(context);
-                  // Handle logout
-                  _showLogoutConfirmation(context);
-                }
-              ),
-            ],
-          ),
-        ),
-      );
-    },
-  );
-}
-
-// Helper method to build profile menu items
-Widget _buildProfileMenuItem(String title, VoidCallback onTap) {
-  return InkWell(
-    onTap: onTap,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 16.0),
-      child: Text(
-        title,
-        style: TextStyle(
-          fontSize: 16,
-          color: Colors.white,
-        ),
-      ),
-    ),
-  );
-}
-
-// Show logout confirmation
-void _showLogoutConfirmation(BuildContext context) {
-  showDialog(
-    context: context,
-    builder: (context) {
-      return AlertDialog(
-        backgroundColor: Colors.black,
-        title: Text('Keluar dari akun Anda?', style: TextStyle(color: Colors.white)),
-        content: Text('Anda dapat masuk kembali kapan saja.', style: TextStyle(color: Colors.grey)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Batal', style: TextStyle(color: Colors.blue)),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              // Handle actual logout here
-              // For example, navigate to login screen
-              // Navigator.of(context).pushReplacement(
-              //   MaterialPageRoute(
-              //     builder: (context) => AuthPage(),
-              //   ),
-              // );
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white,
-              foregroundColor: Colors.black,
+            IconButton(
+              icon: Icon(Icons.search, color: Colors.grey, size: 26),
+              onPressed: () {
+                Navigator.pushReplacement(
+                  context, 
+                  MaterialPageRoute(builder: (context) => ExplorePage())
+                );
+              },
             ),
-            child: Text('Keluar'),
-          ),
-        ],
-      );
-    },
-  );
-}
-
-// Show post creation dialog
-void _showPostDialog(BuildContext context, String profileImage) {
-  showDialog(
-    context: context,
-    builder: (context) {
-      return Dialog(
-        backgroundColor: Colors.black,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Container(
-          width: 500,
-          padding: EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
+            IconButton(
+              icon: Icon(Icons.show_chart, color: Colors.grey, size: 26),
+              onPressed: () {},
+            ),
+            IconButton(
+              icon: Stack(
                 children: [
-                  IconButton(
-                    icon: Icon(Icons.close, color: Colors.white),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                  Spacer(),
-                  Text(
-                    'Draft',
-                    style: TextStyle(color: Colors.blue),
+                  Icon(Icons.notifications_outlined, color: Colors.grey, size: 26),
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    child: Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.blue,
+                      ),
+                    ),
                   ),
                 ],
               ),
-              Row(
+              onPressed: () {
+                Navigator.pushReplacement(
+                  context, 
+                  MaterialPageRoute(builder: (context) => NotificationPage())
+                );
+              },
+            ),
+            IconButton(
+              icon: Icon(Icons.mail_outline, color: Colors.grey, size: 26),
+              onPressed: () {
+                Navigator.pushReplacement(
+                  context, 
+                  MaterialPageRoute(builder: (context) => MessagePage())
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRightSidebar() {
+    return Column(
+      children: [
+        // Search bar
+        Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.grey[900],
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.search, color: Colors.grey),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    "Cari",
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        
+        Expanded(
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  CircleAvatar(
-                    backgroundImage: AssetImage(profileImage),
-                    radius: 20,
-                  ),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: TextField(
-                      maxLines: 5,
-                      decoration: InputDecoration(
-                        hintText: 'Apa yang sedang terjadi?',
-                        hintStyle: TextStyle(color: Colors.grey),
-                        border: InputBorder.none,
-                      ),
-                      style: TextStyle(color: Colors.white),
-                    ),
-                  ),
+                  _buildPremiumBox(),
+                  const SizedBox(height: 16),
+                  _buildTrendingWidget(),
+                  const SizedBox(height: 16),
+                  _buildFollowSuggestions(),
                 ],
               ),
-              Divider(color: Colors.grey[800]),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      IconButton(
-                        icon: Icon(Icons.image, color: Colors.blue),
-                        onPressed: () {},
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.gif_box, color: Colors.blue),
-                        onPressed: () {},
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.poll, color: Colors.blue),
-                        onPressed: () {},
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.emoji_emotions, color: Colors.blue),
-                        onPressed: () {},
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.event, color: Colors.blue),
-                        onPressed: () {},
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.location_on, color: Colors.blue),
-                        onPressed: () {},
-                      ),
-                    ],
-                  ),
-                  ElevatedButton(
-                    onPressed: () {
-                      // Handle post creation
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Postingan diterbitkan!'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                    ),
-                    child: Text('Posting'),
-                  ),
-                ],
-              ),
-            ],
+            ),
           ),
-        ),
-      );
-    },
-  );
-}
-
-class PostListView extends StatelessWidget {
-  const PostListView({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: EdgeInsets.zero,
-      children: const [
-        PostCard(
-          username: "Starfess || CEK PINNED UNTUK KIRIM MENFESS",
-          handle: "@starfess",
-          content:
-              "Kepo dong idol kalian pernah viral karena apa guys?😭\nViral in a positive way ya yorobun. Buat seru-seruan aja, pengen kenal kehidupan fandom lain wkwk\n-star.",
-          timestamp: "11j",
-          profileImage: 'images/profil1.jpg',
-          isVerified: true,
-          showBotLabel: true,
-          commentsCount: 520,
-          retweetsCount: 745,
-          likesCount: 9000,
-          viewsText: '758rb',
-        ),
-        PostCard(
-          username: "Indonesian Pop Base",
-          handle: "@IndoPopBase",
-          content: "Show your now playing 🎵",
-          timestamp: "22j",
-          profileImage: 'images/profil2.jpg',
-          isVerified: true,
-          commentsCount: 751,
-          retweetsCount: 526,
-          likesCount: 930,
-          viewsText: '101rb',
-        ),
-        PostCard(
-          username: "TanyarI💚",
-          handle: "@tanyakanrl",
-          content:
-              "buat yang main semua app sosmed, bener gak gambar ini? 😅 yang cuma main X tidak usah menjawab. 💚",
-          timestamp: "1 Mei",
-          imageUrl: "images/postingan1.jpg",
-          profileImage: 'images/profil3.jpg',
-          isVerified: true,
-          showBotLabel: true,
-          commentsCount: 728,
-          retweetsCount: 1000,
-          likesCount: 21000,
-          viewsText: '225rb',
-        ),
-        PostCard(
-          username: "Western Enthusiast",
-          handle: "@westenthu",
-          content:
-              "Kalau Belly endingnya sama Conrad, saya Nazar\n- share 3 paket soal latihan UTBK PU/PM gratis di gdrive\n- membuka kelas privat toefl/ielts gratis 3 pertemuan untuk 3 org\n- Membagikan materi biologi SMA kelas XII gratis untuk angkt 2026\nyg mau silahkan ya wst",
-          timestamp: "7j",
-          imageUrl: "images/postingan2.jpg",
-          profileImage: 'images/profil4.jpg',
-          showBotLabel: true,
-          commentsCount: 584,
-          retweetsCount: 996,
-          likesCount: 5000,
-          viewsText: '100rb',
         ),
       ],
     );
   }
-}
 
-class PostCard extends StatelessWidget {
-  final String username;
-  final String handle;
-  final String content;
-  final String timestamp;
-  final String? imageUrl;
-  final String profileImage;
-  final bool isVerified;
-  final bool showGreenLove;
-  final bool showBotLabel;
-  final String? extraNote;
-  final int commentsCount;
-  final int retweetsCount;
-  final int likesCount;
-  final String? viewsText;
-
-  const PostCard({
-    super.key,
-    required this.username,
-    required this.handle,
-    required this.content,
-    required this.timestamp,
-    this.imageUrl,
-    required this.profileImage,
-    this.isVerified = false,
-    this.showGreenLove = false,
-    this.showBotLabel = false,
-    this.extraNote,
-    required this.commentsCount,
-    required this.retweetsCount,
-    required this.likesCount,
-    this.viewsText,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    // Cek apakah layar kecil (mobile)
-    final bool isMobile = MediaQuery.of(context).size.width < 600;
-    
-    return GestureDetector(
-      onTap: () {
-        // Buka tampilan detail saat postingan diketuk
-        openPostDetail(
-          context,
-          username: username,
-          handle: handle,
-          content: content,
-          timestamp: timestamp,
-          imageUrl: imageUrl,
-          profileImage: profileImage,
-          isVerified: isVerified,
-          commentsCount: commentsCount,
-          retweetsCount: retweetsCount,
-          likesCount: likesCount,
-          viewsText: viewsText ?? '',
-        );
-      },
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border(
-            bottom: BorderSide(
-              color: Colors.grey[800]!,
-              width: 0.5,
+  Widget _buildPremiumBox() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey[900],
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Berlangganan Premium',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Berlangganan untuk mengakses fitur-fitur baru dan, jika memenuhi syarat, menerima bagi hasil pendapatan.',
+            style: TextStyle(color: Colors.grey, fontSize: 14),
+          ),
+          const SizedBox(height: 12),
+          ElevatedButton(
+            onPressed: () {},
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue,
+              foregroundColor: Colors.white,
+              padding: EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+            ),
+            child: const Text(
+              "Berlangganan",
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTrendingWidget() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey[900],
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Sedang hangat dibicarakan',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
+          const SizedBox(height: 12),
+          // Trending topics will be loaded from API
+          _buildTrendingItem('Flutter Development', '5.2K posts'),
+          _buildTrendingItem('React Native', '3.8K posts'),
+          _buildTrendingItem('Mobile Apps', '12.1K posts'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTrendingItem(String topic, String count) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Trending in Technology',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+          SizedBox(height: 2),
+          Text(
+            topic,
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+          ),
+          Text(
+            count,
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFollowSuggestions() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey[900],
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Untuk Diikuti',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
+          const SizedBox(height: 8),
+          // Follow suggestions will be loaded from API
+          _buildFollowSuggestion('Flutter Dev', '@flutterdev', 'images/user1.jpg'),
+          _buildFollowSuggestion('Dart Lang', '@dart_lang', 'images/user2.jpg'),
+          _buildFollowSuggestion('Google Dev', '@googledev', 'images/user3.jpg'),
+          SizedBox(height: 16),
+          Text(
+            'Tampilkan lebih banyak',
+            style: TextStyle(color: Colors.blue),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFollowSuggestion(String name, String username, String imagePath) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        children: [
+          CircleAvatar(
+            backgroundImage: AssetImage(imagePath),
+            radius: 20,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  username,
+                  style: const TextStyle(color: Colors.grey, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              // Follow user functionality
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Following $name')),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.white,
+              foregroundColor: Colors.black,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            ),
+            child: const Text(
+              'Ikuti',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showProfileMenu(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Consumer<UserProvider>(
+          builder: (context, userProvider, child) {
+            final user = userProvider.currentUser;
+            
+            return Dialog(
+              backgroundColor: Colors.black,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: Colors.grey[800]!, width: 1),
+              ),
+              child: Container(
+                width: 300,
+                padding: EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    ListTile(
+                      leading: CircleAvatar(
+                        backgroundImage: user?.profileImage != null 
+                          ? NetworkImage('http://localhost:3000/${user!.profileImage}')
+                          : AssetImage('images/default_avatar.jpg') as ImageProvider,
+                      ),
+                      title: Text(
+                        user?.name ?? 'Unknown User', 
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)
+                      ),
+                      subtitle: Text(
+                        '@${user?.username ?? 'unknown'}', 
+                        style: TextStyle(color: Colors.grey)
+                      ),
+                      trailing: Icon(Icons.check_circle, color: Colors.blue),
+                    ),
+                    Divider(color: Colors.grey[800]),
+                    _buildProfileMenuItem(
+                      'Tambahkan akun yang ada', 
+                      () {
+                        Navigator.pop(context);
+                        // Handle add existing account
+                      }
+                    ),
+                    _buildProfileMenuItem(
+                      'Kelola Akun', 
+                      () {
+                        Navigator.pop(context);
+                        // Handle manage accounts
+                      }
+                    ),
+                    _buildProfileMenuItem(
+                      'Keluar', 
+                      () {
+                        Navigator.pop(context);
+                        _showLogoutConfirmation(context);
+                      }
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildProfileMenuItem(String title, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 16.0),
+        child: Text(
+          title,
+          style: TextStyle(fontSize: 16, color: Colors.white),
         ),
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  CircleAvatar(
-                    backgroundImage: AssetImage(profileImage),
-                    radius: 20,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // User info row
-                        Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                username,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 15,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            if (isVerified)
-                              Padding(
-                                padding: EdgeInsets.only(left: 4),
-                                child: Icon(
-                                  Icons.verified,
-                                  color: Colors.blue,
-                                  size: 15,
-                                ),
-                              ),
-                            Text(
-                              " · $timestamp",
-                             style: TextStyle(color: Colors.grey, fontSize: 14),
-                           ),
-                           Spacer(),
-                           Icon(Icons.more_horiz, color: Colors.grey, size: 20),
-                         ],
-                       ),
-                       
-                       // Handle text
-                       Text(
-                         handle,
-                         style: TextStyle(color: Colors.grey, fontSize: 14),
-                       ),
-                       
-                       // Bot label if needed
-                       if (showBotLabel)
-                         Padding(
-                           padding: const EdgeInsets.only(top: 4),
-                           child: Row(
-                             children: [
-                               Icon(Icons.android, size: 14, color: Colors.grey),
-                               SizedBox(width: 4),
-                               Text(
-                                 "Otomatis",
-                                 style: TextStyle(
-                                   color: Colors.grey,
-                                   fontSize: 12,
-                                 ),
-                               ),
-                             ],
-                           ),
-                         ),
-                       
-                       const SizedBox(height: 8),
-                       
-                       // Content
-                       Text(
-                         content,
-                         style: TextStyle(fontSize: 15),
-                       ),
-                       
-                       // Image if any
-                       if (imageUrl != null) ...[
-                         const SizedBox(height: 8),
-                         ClipRRect(
-                           borderRadius: BorderRadius.circular(12),
-                           child: Image.asset(imageUrl!),
-                         ),
-                       ],
-                       
-                       const SizedBox(height: 12),
-                       
-                       // Interaction icons - match with image
-                       Row(
-                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                         children: [
-                           _buildInteractionIcon(
-                             Icon(Icons.chat_bubble_outline, color: Colors.grey, size: 18),
-                             commentsCount,
-                           ),
-                           _buildInteractionIcon(
-                             Icon(Icons.repeat, color: Colors.grey, size: 18),
-                             retweetsCount,
-                           ),
-                           _buildInteractionIcon(
-                             Icon(Icons.favorite_border, color: Colors.grey, size: 18),
-                             likesCount,
-                           ),
-                           Row(
-                             children: [
-                               Icon(Icons.bar_chart, color: Colors.grey, size: 18),
-                               SizedBox(width: 4),
-                               Text(
-                                 viewsText ?? '',
-                                 style: TextStyle(color: Colors.grey, fontSize: 13),
-                               ),
-                             ],
-                           ),
-                           Icon(Icons.share_outlined, color: Colors.grey, size: 18),
-                         ],
-                       ),
-                     ],
-                   ),
-                 ),
-               ],
-             ),
-           ),
-         ],
-       ),
-     ),
-   );
- }
+      ),
+    );
+  }
 
- Widget _buildInteractionIcon(Widget icon, int count) {
-   return Row(
-     children: [
-       icon,
-       SizedBox(width: 4),
-       Text(
-         formatCount(count),
-         style: TextStyle(color: Colors.grey, fontSize: 13),
-       ),
-     ],
-   );
- }
-}
+  void _showLogoutConfirmation(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: Colors.black,
+          title: Text('Keluar dari akun Anda?', style: TextStyle(color: Colors.white)),
+          content: Text('Anda dapat masuk kembali kapan saja.', style: TextStyle(color: Colors.grey)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Batal', style: TextStyle(color: Colors.blue)),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                final userProvider = Provider.of<UserProvider>(context, listen: false);
+                await userProvider.logout();
+                // Navigate to login screen
+                Navigator.of(context).pushReplacementNamed('/auth');
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: Colors.black,
+              ),
+              child: Text('Keluar'),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
-// Fungsi untuk membuka detail postingan
-void openPostDetail(BuildContext context, {
- required String username,
- required String handle,
- required String content,
- required String timestamp,
- String? imageUrl,
- required String profileImage,
- required bool isVerified,
- required int commentsCount,
- required int retweetsCount,
- required int likesCount,
- required String viewsText,
-}) {
- final bool isMobile = MediaQuery.of(context).size.width < 600;
- 
- if (isMobile) {
-   // Tampilan fullscreen untuk mobile
-   Navigator.of(context).push(
-     MaterialPageRoute(
-       builder: (context) => PostDetailMobileScreen(
-         username: username,
-         handle: handle,
-         content: content,
-         timestamp: timestamp,
-         imageUrl: imageUrl,
-         profileImage: profileImage,
-         isVerified: isVerified,
-         commentsCount: commentsCount,
-         retweetsCount: retweetsCount,
-         likesCount: likesCount,
-         viewsText: viewsText,
-       ),
-     ),
-   );
- } else {
-   // Tampilan dialog untuk desktop
-   showDialog(
-     context: context,
-     builder: (context) => Dialog(
-       backgroundColor: Colors.transparent,
-       insetPadding: EdgeInsets.symmetric(horizontal: 100),
-       child: PostDetailDesktopScreen(
-         username: username,
-         handle: handle,
-         content: content,
-         timestamp: timestamp,
-         imageUrl: imageUrl,
-         profileImage: profileImage,
-         isVerified: isVerified,
-         commentsCount: commentsCount,
-         retweetsCount: retweetsCount,
-         likesCount: likesCount,
-         viewsText: viewsText,
-       ),
-     ),
-   );
- }
-}
+  // Utility functions
+  String _formatTime(DateTime dateTime) {
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
 
-// Tampilan detail postingan untuk Mobile - fullscreen
-class PostDetailMobileScreen extends StatelessWidget {
- final String username;
- final String handle;
- final String content;
- final String timestamp;
- final String? imageUrl;
- final String profileImage;
- final bool isVerified;
- final int commentsCount;
- final int retweetsCount;
- final int likesCount;
- final String viewsText;
+    if (difference.inDays > 7) {
+      return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
+    } else if (difference.inDays > 0) {
+      return '${difference.inDays}d';
+    } else if (difference.inHours > 0) {
+      return '${difference.inHours}h';
+    } else if (difference.inMinutes > 0) {
+      return '${difference.inMinutes}m';
+    } else {
+      return 'now';
+    }
+  }
 
- const PostDetailMobileScreen({
-   Key? key,
-   required this.username,
-   required this.handle,
-   required this.content,
-   required this.timestamp,
-   this.imageUrl,
-   required this.profileImage,
-   required this.isVerified,
-   required this.commentsCount,
-   required this.retweetsCount,
-   required this.likesCount,
-   required this.viewsText,
- }) : super(key: key);
-
- @override
- Widget build(BuildContext context) {
-   return Scaffold(
-     backgroundColor: Colors.black,
-     appBar: AppBar(
-       backgroundColor: Colors.black,
-       elevation: 0,
-       leading: IconButton(
-         icon: Icon(Icons.close, color: Colors.white),
-         onPressed: () => Navigator.of(context).pop(),
-       ),
-       actions: [
-         IconButton(
-           icon: Icon(Icons.more_horiz, color: Colors.white),
-           onPressed: () {},
-         ),
-       ],
-     ),
-     body: SingleChildScrollView(
-       child: Column(
-         crossAxisAlignment: CrossAxisAlignment.start,
-         children: [
-           // Gambar postingan sebagai full-width content
-           if (imageUrl != null)
-             Container(
-               width: double.infinity,
-               child: Image.asset(
-                 imageUrl!,
-                 fit: BoxFit.cover,
-               ),
-             ),
-           
-           // Info interaksi
-           Padding(
-             padding: const EdgeInsets.all(16.0),
-             child: Row(
-               mainAxisAlignment: MainAxisAlignment.spaceBetween,
-               children: [
-                 _buildInteractionIcon(
-                   Icon(Icons.chat_bubble_outline, color: Colors.white, size: 20),
-                   commentsCount,
-                   color: Colors.white,
-                 ),
-                 _buildInteractionIcon(
-                   Icon(Icons.repeat, color: Colors.white, size: 20),
-                   retweetsCount,
-                   color: Colors.white,
-                 ),
-                 _buildInteractionIcon(
-                   Icon(Icons.favorite_border, color: Colors.white, size: 20),
-                   likesCount,
-                   color: Colors.white,
-                 ),
-                 Row(
-                   children: [
-                     Icon(Icons.bar_chart, color: Colors.white, size: 20),
-                     SizedBox(width: 4),
-                     Text(
-                       viewsText,
-                       style: TextStyle(color: Colors.white),
-                     ),
-                   ],
-                 ),
-                 Icon(Icons.share_outlined, color: Colors.white, size: 20),
-               ],
-             ),
-           ),
-         ],
-       ),
-     ),
-   );
- }
- 
- Widget _buildInteractionIcon(Widget icon, int count, {Color color = Colors.grey}) {
-   return Row(
-     children: [
-       icon,
-       SizedBox(width: 4),
-       Text(
-         formatCount(count),
-         style: TextStyle(color: color),
-       ),
-     ],
-   );
- }
-}
-
-// Tampilan detail postingan untuk Desktop - dialog
-class PostDetailDesktopScreen extends StatelessWidget {
- final String username;
- final String handle;
- final String content;
- final String timestamp;
- final String? imageUrl;
- final String profileImage;
- final bool isVerified;
- final int commentsCount;
- final int retweetsCount;
- final int likesCount;
- final String viewsText;
-
- const PostDetailDesktopScreen({
-   Key? key,
-   required this.username,
-   required this.handle,
-   required this.content,
-   required this.timestamp,
-   this.imageUrl,
-   required this.profileImage,
-   required this.isVerified,
-   required this.commentsCount,
-   required this.retweetsCount,
-   required this.likesCount,
-   required this.viewsText,
- }) : super(key: key);
-
- @override
- Widget build(BuildContext context) {
-   return Container(
-     constraints: BoxConstraints(
-       maxWidth: MediaQuery.of(context).size.width * 0.8,
-       maxHeight: MediaQuery.of(context).size.height * 0.8,
-     ),
-     decoration: BoxDecoration(
-       color: Colors.black,
-       borderRadius: BorderRadius.circular(16),
-     ),
-     child: ClipRRect(
-       borderRadius: BorderRadius.circular(16),
-       child: Row(
-         children: [
-           // Bagian kiri - gambar postingan (tidak terpotong)
-           if (imageUrl != null)
-             Expanded(
-               flex: 1,
-               child: Image.asset(
-                 imageUrl!,
-                 fit: BoxFit.contain,
-               ),
-             ),
-           
-           // Bagian kanan - detail postingan & komentar
-           Expanded(
-             flex: 1,
-             child: Column(
-               crossAxisAlignment: CrossAxisAlignment.start,
-               children: [
-                 // Header dengan tombol close
-                 Container(
-                   padding: const EdgeInsets.all(12),
-                   alignment: Alignment.centerRight,
-                   child: IconButton(
-                     icon: Icon(Icons.close, color: Colors.white),
-                     onPressed: () => Navigator.of(context).pop(),
-                   ),
-                 ),
-                 
-                 // Detail postingan
-                 Expanded(
-                   child: SingleChildScrollView(
-                     child: Column(
-                       crossAxisAlignment: CrossAxisAlignment.start,
-                       children: [
-                         // Informasi pengguna
-                         Padding(
-                           padding: const EdgeInsets.only(left: 16, right: 16, bottom: 16),
-                           child: Row(
-                             children: [
-                               CircleAvatar(
-                                 backgroundImage: AssetImage(profileImage),
-                                 radius: 20,
-                               ),
-                               const SizedBox(width: 12),
-                               Expanded(
-                                 child: Column(
-                                   crossAxisAlignment: CrossAxisAlignment.start,
-                                   children: [
-                                     Row(
-                                       children: [
-                                         Text(
-                                           username,
-                                           style: const TextStyle(
-                                             fontWeight: FontWeight.bold,
-                                             fontSize: 16,
-                                           ),
-                                           overflow: TextOverflow.ellipsis,
-                                         ),
-                                         if (isVerified)
-                                           Padding(
-                                             padding: EdgeInsets.only(left: 4),
-                                             child: Icon(
-                                               Icons.verified,
-                                               color: Colors.blue,
-                                               size: 16,
-                                             ),
-                                           ),
-                                       ],
-                                     ),
-                                     Text(
-                                       handle,
-                                       style: TextStyle(color: Colors.grey, fontSize: 14),
-                                     ),
-                                   ],
-                                 ),
-                               ),
-                               Icon(Icons.more_horiz, color: Colors.grey),
-                             ],
-                           ),
-                         ),
-                         
-                         // Konten postingan
-                         Padding(
-                           padding: const EdgeInsets.symmetric(horizontal: 16),
-                           child: Text(
-                             content,
-                             style: TextStyle(fontSize: 16),
-                           ),
-                         ),
-                         
-                         // Timestamp & stats
-                         Padding(
-                           padding: const EdgeInsets.all(16),
-                           child: Column(
-                             crossAxisAlignment: CrossAxisAlignment.start,
-                             children: [
-                               Text(
-                                 timestamp,
-                                 style: TextStyle(color: Colors.grey),
-                               ),
-                               Divider(color: Colors.grey[800]),
-                               // Stats row
-                               Row(
-                                 children: [
-                                   _buildStat(commentsCount.toString(), 'Komentar'),
-                                   SizedBox(width: 16),
-                                   _buildStat(retweetsCount.toString(), 'Retweet'),
-                                   SizedBox(width: 16),
-                                   _buildStat(likesCount.toString(), 'Suka'),
-                                 ],
-                               ),
-                               Divider(color: Colors.grey[800]),
-                             ],
-                           ),
-                         ),
-                         
-                         // Interaction buttons
-                         Padding(
-                           padding: const EdgeInsets.symmetric(horizontal: 16),
-                           child: Row(
-                             mainAxisAlignment: MainAxisAlignment.spaceAround,
-                             children: [
-                               IconButton(
-                                 icon: Icon(Icons.chat_bubble_outline, color: Colors.grey),
-                                 onPressed: () {},
-                               ),
-                               IconButton(
-                                 icon: Icon(Icons.repeat, color: Colors.grey),
-                                 onPressed: () {},
-                               ),
-                               IconButton(
-                                 icon: Icon(Icons.favorite_border, color: Colors.grey),
-                                 onPressed: () {},
-                               ),
-                               IconButton(
-                                 icon: Icon(Icons.bar_chart, color: Colors.grey),
-                                 onPressed: () {},
-                               ),
-                               IconButton(
-                                 icon: Icon(Icons.share_outlined, color: Colors.grey),
-                                 onPressed: () {},
-                               ),
-                             ],
-                           ),
-                         ),
-                         
-                         Divider(color: Colors.grey[800]),
-                         
-                         // Dummy comments
-                         _buildCommentItem(
-                           username: "User 1",
-                           handle: "@user1",
-                           timestamp: "1j",
-                           content: "Great post! Love it.",
-                           profileImage: "images/avatar1.jpg",
-                         ),
-                         _buildCommentItem(
-                           username: "User 2",
-                           handle: "@user2",
-                           timestamp: "2j",
-                           content: "Couldn't agree more with this.",
-                           profileImage: "images/avatar2.jpg",
-                         ),
-                         _buildCommentItem(
-                           username: "User 3",
-                           handle: "@user3",
-                           timestamp: "3j",
-                           content: "Thanks for sharing this!",
-                           profileImage: "images/avatar3.jpg",
-                         ),
-                       ],
-                     ),
-                   ),
-                 ),
-               ],
-             ),
-           ),
-         ],
-       ),
-     ),
-   );
- }
- 
- Widget _buildStat(String count, String label) {
-   return Row(
-     children: [
-       Text(
-         count,
-         style: TextStyle(fontWeight: FontWeight.bold),
-       ),
-       SizedBox(width: 4),
-       Text(
-         label,
-         style: TextStyle(color: Colors.grey),
-       ),
-     ],
-   );
- }
- 
- Widget _buildCommentItem({
-   required String username,
-   required String handle,
-   required String timestamp,
-   required String content,
-   required String profileImage,
- }) {
-   return Container(
-     padding: EdgeInsets.all(16),
-     decoration: BoxDecoration(
-       border: Border(
-         bottom: BorderSide(color: Colors.grey[800]!, width: 0.5),
-       ),
-     ),
-     child: Row(
-       crossAxisAlignment: CrossAxisAlignment.start,
-       children: [
-         CircleAvatar(
-           backgroundImage: AssetImage(profileImage),
-           radius: 16,
-         ),
-         SizedBox(width: 12),
-         Expanded(
-           child: Column(
-             crossAxisAlignment: CrossAxisAlignment.start,
-             children: [
-               Row(
-                 children: [
-                   Text(
-                     username,
-                     style: TextStyle(
-                       fontWeight: FontWeight.bold,
-                       fontSize: 14,
-                     ),
-                   ),
-                   SizedBox(width: 4),
-                   Text(
-                     "$handle · $timestamp",
-                     style: TextStyle(color: Colors.grey, fontSize: 12),
-                   ),
-                 ],
-               ),
-               SizedBox(height: 4),
-               Text(content),
-               SizedBox(height: 8),
-               // Comment interaction buttons
-               Row(
-                 children: [
-                   Icon(Icons.chat_bubble_outline, color: Colors.grey, size: 16),
-                   SizedBox(width: 16),
-                   Icon(Icons.repeat, color: Colors.grey, size: 16),
-                   SizedBox(width: 16),
-                   Icon(Icons.favorite_border, color: Colors.grey, size: 16),
-                   SizedBox(width: 16),
-                   Icon(Icons.share_outlined, color: Colors.grey, size: 16),
-                 ],
-               ),
-             ],
-           ),
-         ),
-       ],
-     ),
-   );
- }
-}
-
-// Fungsi format angka ke 'rb' untuk ribu
-String formatCount(int count) {
- if (count >= 1000) {
-   double inThousands = count / 1000;
-   if (inThousands == inThousands.toInt()) {
-     return '${inThousands.toInt()}rb';
-   } else {
-     return '${inThousands.toStringAsFixed(1)}rb';
-   }
- }
- return count.toString();
-}
-
-// Widget Premium Box yang ditampilkan di sidebar kanan
-class PremiumBox extends StatelessWidget {
- @override
- Widget build(BuildContext context) {
-   return Container(
-     padding: const EdgeInsets.all(16),
-     decoration: BoxDecoration(
-       color: Colors.grey[900],
-       borderRadius: BorderRadius.circular(16),
-     ),
-     child: Column(
-       crossAxisAlignment: CrossAxisAlignment.start,
-       children: [
-         const Text(
-           'Berlangganan Premium',
-           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-         ),
-         const SizedBox(height: 8),
-         const Text(
-           'Berlangganan untuk mengakses fitur-fitur baru dan, jika memenuhi syarat, menerima bagi hasil pendapatan.',
-           style: TextStyle(color: Colors.grey, fontSize: 14),
-         ),
-         const SizedBox(height: 12),
-         ElevatedButton(
-           onPressed: () {},
-           style: ElevatedButton.styleFrom(
-             backgroundColor: Colors.blue,
-             foregroundColor: Colors.white,
-             padding: EdgeInsets.symmetric(vertical: 12, horizontal: 20),
-             shape: RoundedRectangleBorder(
-               borderRadius: BorderRadius.circular(20),
-             ),
-           ),
-           child: const Text(
-             "Berlangganan",
-             style: TextStyle(
-               fontWeight: FontWeight.bold,
-               fontSize: 14,
-             ),
-           ),
-         ),
-       ],
-     ),
-   );
- }
-}
-
-// Widget Trending yang ditampilkan di sidebar kanan
-class TrendingWidget extends StatelessWidget {
- final List<Map<String, String>> trends = [
-   {
-     'topic': 'Sedang tren dalam topik Indonesia',
-     'title': 'Bali',
-     'posts': '17,8 rb postingan',
-   },
-   {
-     'topic': 'Sedang tren dalam topik Indonesia',
-     'title': 'Putri KW',
-     'posts': '1.079 postingan',
-   },
-   {
-     'topic': 'Sedang tren dalam topik Indonesia',
-     'title': 'Biru',
-     'posts': '8.210 postingan',
-   },
- ];
-
- @override
- Widget build(BuildContext context) {
-   return Container(
-     padding: const EdgeInsets.all(16),
-     decoration: BoxDecoration(
-       color: Colors.grey[900],
-       borderRadius: BorderRadius.circular(16),
-     ),
-     child: Column(
-       crossAxisAlignment: CrossAxisAlignment.start,
-       children: [
-         const Text(
-           'Sedang hangat dibicarakan',
-           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-         ),
-         const SizedBox(height: 12),
-
-         ...trends.asMap().entries.map((entry) {
-           final index = entry.key;
-           final trend = entry.value;
-           return Column(
-             crossAxisAlignment: CrossAxisAlignment.start,
-             children: [
-               if (index > 0) Divider(color: Colors.grey[800]),
-               Padding(
-                 padding: const EdgeInsets.symmetric(vertical: 8),
-                 child: Column(
-                   crossAxisAlignment: CrossAxisAlignment.start,
-                   children: [
-                     Row(
-                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                       children: [
-                         Text(
-                           trend['topic']!,
-                           style: const TextStyle(
-                             color: Colors.grey,
-                             fontSize: 12,
-                           ),
-                         ),
-                         Icon(Icons.more_horiz, color: Colors.grey, size: 16),
-                       ],
-                     ),
-                     const SizedBox(height: 2),
-                     Text(
-                       trend['title']!,
-                       style: const TextStyle(
-                         fontWeight: FontWeight.bold,
-                         fontSize: 15,
-                       ),
-                     ),
-                     Text(
-                       trend['posts']!,
-                       style: const TextStyle(
-                         color: Colors.grey,
-                         fontSize: 12,
-                       ),
-                     ),
-                   ],
-                 ),
-               ),
-             ],
-           );
-         }).toList(),
-         const SizedBox(height: 8),
-         Text(
-           'Tampilkan lebih banyak',
-           style: TextStyle(color: Colors.blue, fontSize: 14),
-         ),
-       ],
-     ),
-   );
- }
-}
-
-// Widget Follow Suggestions yang ditampilkan di sidebar kanan
-class FollowSuggestions extends StatelessWidget {
- final List<Map<String, String>> suggestions = [
-   {
-     'name': 'red is ch30l 🍒',
-     'handle': '@redxch30l',
-     'image': 'images/rekom1.jpg',
-   },
-   {
-     'name': 'gailord',
-     'handle': '@hoonsblicky',
-     'image': 'images/rekom2.jpg',
-   },
-   {
-     'name': 'el | ia but MOLO ENTHUSIAST',
-     'handle': '@woozicrunch',
-     'image': 'images/rekom3.jpg',
-   },
- ];
-
- @override
- Widget build(BuildContext context) {
-   return Container(
-     padding: const EdgeInsets.all(16),
-     decoration: BoxDecoration(
-       color: Colors.grey[900],
-       borderRadius: BorderRadius.circular(16),
-     ),
-     child: Column(
-       crossAxisAlignment: CrossAxisAlignment.start,
-       children: [
-         const Text(
-           'Untuk Diikuti',
-           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-         ),
-         const SizedBox(height: 8),
-         ...suggestions.asMap().entries.map((entry) {
-           final index = entry.key;
-           final user = entry.value;
-           return Column(
-             children: [
-               if (index > 0) Divider(color: Colors.grey[800]),
-               Padding(
-                 padding: const EdgeInsets.symmetric(vertical: 8.0),
-                 child: Row(
-                   children: [
-                     CircleAvatar(
-                       backgroundImage: AssetImage(user['image']!),
-                       radius: 20,
-                     ),
-                     const SizedBox(width: 10),
-                     Expanded(
-                       child: Column(
-                         crossAxisAlignment: CrossAxisAlignment.start,
-                         children: [
-                           Text(
-                             user['name']!,
-                             style: const TextStyle(
-                               fontWeight: FontWeight.bold,
-                               fontSize: 14,
-                             ),
-                             overflow: TextOverflow.ellipsis,
-                           ),
-                           Text(
-                             user['handle']!,
-                             style: const TextStyle(color: Colors.grey, fontSize: 13),
-                           ),
-                         ],
-                       ),
-                     ),
-                     Container(
-                       padding: const EdgeInsets.symmetric(
-                         horizontal: 16,
-                         vertical: 8,
-                       ),
-                       decoration: BoxDecoration(
-                         color: Colors.white,
-                         borderRadius: BorderRadius.circular(20),
-                       ),
-                       child: const Text(
-                         'Ikuti',
-                         style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
-                       ),
-                     ),
-                   ],
-                 ),
-               ),
-             ],
-           );
-         }).toList(),
-         const SizedBox(height: 8),
-         Text(
-           'Tampilkan lebih banyak',
-           style: TextStyle(color: Colors.blue, fontSize: 14),
-         ),
-       ],
-     ),
-   );
- }
-}
-
-// Placeholder Screens
-class ExploreScreen extends StatelessWidget {
- const ExploreScreen({Key? key}) : super(key: key);
-
- @override
- Widget build(BuildContext context) {
-   return Scaffold(
-     backgroundColor: Colors.black,
-     appBar: AppBar(
-       backgroundColor: Colors.black,
-       elevation: 0,
-       title: Text('Jelajahi'),
-       leading: IconButton(
-         icon: Icon(Icons.arrow_back),
-         onPressed: () => Navigator.of(context).pop(),
-       ),
-     ),
-     body: Center(
-       child: Text(
-         'Halaman Jelajahi',
-         style: TextStyle(color: Colors.white, fontSize: 24),
-       ),
-     ),
-   );
- }
-}
-
-class TrendsScreen extends StatelessWidget {
- const TrendsScreen({Key? key}) : super(key: key);
-
- @override
- Widget build(BuildContext context) {
-   return Scaffold(
-     backgroundColor: Colors.black,
-     appBar: AppBar(
-       backgroundColor: Colors.black,
-       elevation: 0,
-       title: Text('Trending'),
-       leading: IconButton(
-         icon: Icon(Icons.arrow_back),
-         onPressed: () => Navigator.of(context).pop(),
-       ),
-     ),
-     body: Center(
-       child: Text(
-         'Halaman Trending',
-         style: TextStyle(color: Colors.white, fontSize: 24),
-       ),
-     ),
-   );
- }
-}
-
-class NotificationsScreen extends StatelessWidget {
- const NotificationsScreen({Key? key}) : super(key: key);
-
- @override
- Widget build(BuildContext context) {
-   return Scaffold(
-     backgroundColor: Colors.black,
-     appBar: AppBar(
-       backgroundColor: Colors.black,
-       elevation: 0,
-       title: Text('Notifikasi'),
-       leading: IconButton(
-         icon: Icon(Icons.arrow_back),
-         onPressed: () => Navigator.of(context).pop(),
-       ),
-     ),
-     body: Center(
-       child: Text(
-         'Halaman Notifikasi',
-         style: TextStyle(color: Colors.white, fontSize: 24),
-       ),
-     ),
-   );
- }
-}
-
-class MessagesScreen extends StatelessWidget {
- const MessagesScreen({Key? key}) : super(key: key);
-
- @override
- Widget build(BuildContext context) {
-   return Scaffold(
-     backgroundColor: Colors.black,
-     appBar: AppBar(
-       backgroundColor: Colors.black,
-       elevation: 0,
-       title: Text('Pesan'),
-       leading: IconButton(
-         icon: Icon(Icons.arrow_back),
-         onPressed: () => Navigator.of(context).pop(),
-       ),
-     ),
-     body: Center(
-       child: Text(
-         'Halaman Pesan',
-         style: TextStyle(color: Colors.white, fontSize: 24),
-       ),
-     ),
-   );
- }
-}
-
-class BookmarksScreen extends StatelessWidget {
- const BookmarksScreen({Key? key}) : super(key: key);
-
- @override
- Widget build(BuildContext context) {
-   return Scaffold(
-     backgroundColor: Colors.black,
-     appBar: AppBar(
-       backgroundColor: Colors.black,
-       elevation: 0,
-       title: Text('Bookmark'),
-       leading: IconButton(
-         icon: Icon(Icons.arrow_back),
-         onPressed: () => Navigator.of(context).pop(),
-       ),
-     ),
-     body: Center(
-       child: Text(
-         'Halaman Bookmark',
-         style: TextStyle(color: Colors.white, fontSize: 24),
-       ),
-     ),
-   );
- }
-}
-
-class PremiumScreen extends StatelessWidget {
- const PremiumScreen({Key? key}) : super(key: key);
-
- @override
- Widget build(BuildContext context) {
-   return Scaffold(
-     backgroundColor: Colors.black,
-     appBar: AppBar(
-       backgroundColor: Colors.black,
-       elevation: 0,
-       title: Text('X Premium'),
-       leading: IconButton(
-         icon: Icon(Icons.arrow_back),
-         onPressed: () => Navigator.of(context).pop(),
-       ),
-     ),
-     body: Center(
-       child: Column(
-         mainAxisAlignment: MainAxisAlignment.center,
-         children: [
-           Text(
-             'X Premium',
-             style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
-           ),
-           SizedBox(height: 20),
-           Text(
-             'Dapatkan fitur-fitur premium dan keuntungan lainnya',
-             style: TextStyle(color: Colors.grey, fontSize: 16),
-           ),
-           SizedBox(height: 30),
-           ElevatedButton(
-             onPressed: () {},
-             style: ElevatedButton.styleFrom(
-               backgroundColor: Colors.blue,
-               padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-               shape: RoundedRectangleBorder(
-                 borderRadius: BorderRadius.circular(30),
-               ),
-             ),
-             child: Text('Berlangganan Sekarang'),
-           ),
-         ],
-       ),
-     ),
-   );
- }
-}
-
-class SettingsScreen extends StatelessWidget {
- const SettingsScreen({Key? key}) : super(key: key);
-
- @override
- Widget build(BuildContext context) {
-   return Scaffold(
-     backgroundColor: Colors.black,
-     appBar: AppBar(
-       backgroundColor: Colors.black,
-       elevation: 0,
-       title: Text('Pengaturan dan Privasi'),
-       leading: IconButton(
-         icon: Icon(Icons.arrow_back),
-         onPressed: () => Navigator.of(context).pop(),
-         ),
-     ),
-     body: Center(
-       child: Text(
-         'Halaman Pengaturan',
-         style: TextStyle(color: Colors.white, fontSize: 24),
-       ),
-     ),
-   );
- }
-}
-
-class HelpScreen extends StatelessWidget {
- const HelpScreen({Key? key}) : super(key: key);
-
- @override
- Widget build(BuildContext context) {
-   return Scaffold(
-     backgroundColor: Colors.black,
-     appBar: AppBar(
-       backgroundColor: Colors.black,
-       elevation: 0,
-       title: Text('Bantuan'),
-       leading: IconButton(
-         icon: Icon(Icons.arrow_back),
-         onPressed: () => Navigator.of(context).pop(),
-       ),
-     ),
-     body: Center(
-       child: Text(
-         'Halaman Bantuan',
-         style: TextStyle(color: Colors.white, fontSize: 24),
-       ),
-     ),
-   );
- }
+  String _formatCount(int count) {
+    if (count >= 1000000) {
+      return '${(count / 1000000).toStringAsFixed(1)}M';
+    } else if (count >= 1000) {
+      return '${(count / 1000).toStringAsFixed(1)}K';
+    } else {
+      return count.toString();
+    }
+  }
 }
