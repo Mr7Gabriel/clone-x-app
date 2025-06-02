@@ -383,37 +383,6 @@ class _AuthPageState extends State<AuthPage> {
               ],
             ),
             
-            // Demo accounts info
-            const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.blue.shade50,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.blue.shade200),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Demo Accounts:',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.blue.shade700,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '• xoxo900 / lightborn90@\n• starfess / password123\n• IndoPopBase / password123',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.blue.shade600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            
             // Error message
             if (userProvider.error != null)
               Padding(

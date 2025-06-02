@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:io'; // Add this import for File class
 import 'models.dart';
 import 'api_service.dart';
 
@@ -420,9 +421,14 @@ class UserProvider with ChangeNotifier {
       
       if (bookmarked) {
         // Add to bookmarks list if not already there
-        final post = _posts.firstWhere((p) => p.id == postId, orElse: () => null);
-        if (post != null && !_bookmarks.any((b) => b.id == postId)) {
-          _bookmarks.insert(0, post);
+        try {
+          final post = _posts.firstWhere((p) => p.id == postId);
+          if (!_bookmarks.any((b) => b.id == postId)) {
+            _bookmarks.insert(0, post);
+          }
+        } catch (e) {
+          // Post not found in current posts list, that's okay
+          print('Post not found in current posts list: $e');
         }
       } else {
         // Remove from bookmarks list
