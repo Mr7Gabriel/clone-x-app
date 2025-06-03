@@ -321,38 +321,54 @@ class Reply {
   final int userId;
   final int postId;
   final String content;
+  final String? imageUrl;
   final DateTime createdAt;
-  
-  // User info (from join)
-  final String? username;
-  final String? name;
+  final String username;
+  final String name;
   final String? profileImage;
-  final bool? isVerified;
+  final bool isVerified;
 
   Reply({
     required this.id,
     required this.userId,
     required this.postId,
     required this.content,
+    this.imageUrl,
     required this.createdAt,
-    this.username,
-    this.name,
+    required this.username,
+    required this.name,
     this.profileImage,
-    this.isVerified,
+    required this.isVerified,
   });
 
   factory Reply.fromMap(Map<String, dynamic> map) {
-    return Reply(
-      id: map['id'],
-      userId: map['user_id'],
-      postId: map['post_id'],
-      content: map['content'],
-      createdAt: DateTime.parse(map['created_at'].toString()),
-      username: map['username'],
-      name: map['name'],
-      profileImage: map['profile_image'],
-      isVerified: map['is_verified'] == 1,
-    );
+    try {
+      // Debug print untuk melihat data yang masuk
+      print('=== Reply.fromMap DEBUG ===');
+      print('Raw map: $map');
+      
+      final reply = Reply(
+        id: (map['id'] is int) ? map['id'] : int.parse(map['id'].toString()),
+        userId: (map['user_id'] is int) ? map['user_id'] : int.parse(map['user_id'].toString()),
+        postId: (map['post_id'] is int) ? map['post_id'] : int.parse(map['post_id'].toString()),
+        content: map['content']?.toString() ?? '',
+        imageUrl: map['image_url']?.toString(),
+        createdAt: DateTime.parse(map['created_at'].toString()),
+        username: map['username']?.toString() ?? '',
+        name: map['name']?.toString() ?? '',
+        profileImage: map['profile_image']?.toString(),
+        // FIX: Handle is_verified yang bisa berupa 1/0 (int) atau true/false (bool)
+        isVerified: (map['is_verified'] == 1 || map['is_verified'] == true),
+      );
+      
+      print('Parsed reply successfully: ID=${reply.id}, Content="${reply.content}"');
+      return reply;
+    } catch (e, stackTrace) {
+      print('ERROR in Reply.fromMap: $e');
+      print('StackTrace: $stackTrace');
+      print('Failed map: $map');
+      rethrow;
+    }
   }
 
   Map<String, dynamic> toMap() {
@@ -361,7 +377,12 @@ class Reply {
       'user_id': userId,
       'post_id': postId,
       'content': content,
+      'image_url': imageUrl,
       'created_at': createdAt.toIso8601String(),
+      'username': username,
+      'name': name,
+      'profile_image': profileImage,
+      'is_verified': isVerified,
     };
   }
 }

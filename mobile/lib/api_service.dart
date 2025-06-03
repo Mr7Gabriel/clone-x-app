@@ -2,30 +2,36 @@ import 'package:http/http.dart' as http;
 import 'package:dio/dio.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data'; 
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart'; 
+import 'package:http_parser/http_parser.dart'; 
+import 'package:image_picker/image_picker.dart'; 
 import 'models.dart';
 
 class ApiService {
   static final ApiService _instance = ApiService._internal();
   factory ApiService() => _instance;
   ApiService._internal() {
-    _dio = Dio(BaseOptions(
-      baseUrl: baseUrl,
-      connectTimeout: Duration(seconds: 30),
-      receiveTimeout: Duration(seconds: 30),
-    ));
+    _dio = Dio(
+      BaseOptions(
+        baseUrl: baseUrl,
+        connectTimeout: Duration(seconds: 30),
+        receiveTimeout: Duration(seconds: 30),
+      ),
+    );
   }
 
   // Base URL for your backend server
   static const String baseUrl = 'http://localhost:3000/api';
-  
+
   String? _authToken;
   late Dio _dio;
 
   // Get stored auth token
   Future<String?> _getAuthToken() async {
     if (_authToken != null) return _authToken;
-    
+
     final prefs = await SharedPreferences.getInstance();
     _authToken = prefs.getString('auth_token');
     return _authToken;
@@ -47,27 +53,67 @@ class ApiService {
 
   // Get headers with auth token
   Future<Map<String, String>> _getHeaders({bool needsAuth = false}) async {
-    Map<String, String> headers = {
-      'Content-Type': 'application/json',
-    };
-    
+    Map<String, String> headers = {'Content-Type': 'application/json'};
+
     if (needsAuth) {
       final token = await _getAuthToken();
       if (token != null) {
         headers['Authorization'] = 'Bearer $token';
       }
     }
-    
+
     return headers;
   }
 
   // Handle API response
   Map<String, dynamic>? _handleResponse(http.Response response) {
+    print('Response status: ${response.statusCode}');
+    print('Response body: ${response.body}');
+
     if (response.statusCode >= 200 && response.statusCode < 300) {
-      return json.decode(response.body);
+      try {
+        return json.decode(response.body);
+      } catch (e) {
+        print('Error parsing JSON: $e');
+        return null;
+      }
     } else {
       print('API Error ${response.statusCode}: ${response.body}');
       return null;
+    }
+  }
+
+  // =================== TOKEN METHODS ============================
+  Future<String?> getStoredToken() async {
+    return await _getAuthToken();
+  }
+
+  // =================== HELPER METHODS ==================
+  Future<bool> validateImageFile(File imageFile) async {
+    try {
+      // Check if file exists
+      if (!await imageFile.exists()) {
+        return false;
+      }
+
+      // Check file size (max 10MB)
+      final fileSizeInBytes = await imageFile.length();
+      final fileSizeInMB = fileSizeInBytes / (1024 * 1024);
+      if (fileSizeInMB > 10) {
+        return false;
+      }
+
+      // Check file extension
+      final extension = imageFile.path.toLowerCase().split('.').last;
+      final allowedExtensions = ['jpg', 'jpeg', 'png', 'gif'];
+      if (!allowedExtensions.contains(extension)) {
+        return false;
+      }
+
+      return true;
+    } catch (e) {
+      print('Error validating image file: $e');
+      return false;
     }
   }
 
@@ -78,10 +124,7 @@ class ApiService {
       final response = await http.post(
         Uri.parse('$baseUrl/auth/login'),
         headers: await _getHeaders(),
-        body: json.encode({
-          'username': username,
-          'password': password,
-        }),
+        body: json.encode({'username': username, 'password': password}),
       );
 
       final data = _handleResponse(response);
@@ -96,7 +139,12 @@ class ApiService {
     }
   }
 
-  Future<User?> register(String username, String email, String password, String name) async {
+  Future<User?> register(
+    String username,
+    String email,
+    String password,
+    String name,
+  ) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/auth/register'),
@@ -142,9 +190,7 @@ class ApiService {
       final response = await _dio.post(
         '/upload/profile-image',
         data: formData,
-        options: Options(
-          headers: {'Authorization': 'Bearer $token'},
-        ),
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
 
       if (response.statusCode == 200 && response.data['success'] == true) {
@@ -172,9 +218,7 @@ class ApiService {
       final response = await _dio.post(
         '/upload/banner-image',
         data: formData,
-        options: Options(
-          headers: {'Authorization': 'Bearer $token'},
-        ),
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
 
       if (response.statusCode == 200 && response.data['success'] == true) {
@@ -186,38 +230,124 @@ class ApiService {
       return null;
     }
   }
-
-  Future<String?> uploadPostImage(File imageFile) async {
-    try {
-      final token = await _getAuthToken();
-      if (token == null) return null;
-
-      FormData formData = FormData.fromMap({
-        'postImage': await MultipartFile.fromFile(
-          imageFile.path,
-          filename: 'post_${DateTime.now().millisecondsSinceEpoch}.jpg',
-        ),
-      });
-
-      final response = await _dio.post(
-        '/upload/post-image',
-        data: formData,
-        options: Options(
-          headers: {'Authorization': 'Bearer $token'},
-        ),
-      );
-
-      if (response.statusCode == 200 && response.data['success'] == true) {
-        return response.data['image_url'];
-      }
-      return null;
-    } catch (e) {
-      print('Upload post image error: $e');
-      return null;
-    }
-  }
-
   // =================== POST METHODS ===================
+
+    Future<String?> uploadPostImage(File imageFile) async {
+  try {
+    // Check if file exists and is readable
+    if (!await imageFile.exists()) {
+      throw Exception('Image file does not exist');
+    }
+
+    // Check file size (max 10MB)
+    final fileSizeInBytes = await imageFile.length();
+    final fileSizeInMB = fileSizeInBytes / (1024 * 1024);
+    if (fileSizeInMB > 10) {
+      throw Exception('Image file is too large (max 10MB)');
+    }
+
+    final token = await _getAuthToken();
+    if (token == null) {
+      throw Exception('No authentication token found');
+    }
+
+    FormData formData = FormData.fromMap({
+      'postImage': await MultipartFile.fromFile(
+        imageFile.path,
+        filename: 'post_${DateTime.now().millisecondsSinceEpoch}.jpg',
+      ),
+    });
+
+    print('Uploading image: ${imageFile.path}');
+    print('File size: ${fileSizeInMB.toStringAsFixed(2)}MB');
+
+    final response = await _dio.post(
+      '/upload/post-image',
+      data: formData,
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+
+    print('Upload response status: ${response.statusCode}');
+    print('Upload response body: ${response.data}');
+
+    if (response.statusCode == 200 && response.data['success'] == true) {
+      return response.data['image_url'];
+    } else {
+      throw Exception('Invalid response format');
+    }
+  } catch (e) {
+    print('Error uploading image: $e');
+    throw Exception('Upload failed: $e');
+  }
+}
+
+  Future<String?> uploadPostImageWeb(XFile imageFile) async {
+  try {
+    final token = await _getAuthToken();
+    if (token == null) {
+      throw Exception('No authentication token found');
+    }
+
+    // Baca file sebagai bytes
+    final Uint8List bytes = await imageFile.readAsBytes();
+    print('DEBUG WEB: Image bytes length: ${bytes.length}');
+    
+    if (bytes.isEmpty) {
+      throw Exception('Image file is empty');
+    }
+
+    // Check file size (max 10MB)
+    final fileSizeInMB = bytes.length / (1024 * 1024);
+    if (fileSizeInMB > 10) {
+      throw Exception('Image file is too large (max 10MB)');
+    }
+
+    // Buat FormData dengan bytes
+    FormData formData = FormData.fromMap({
+      'postImage': MultipartFile.fromBytes(
+        bytes,
+        filename: 'post_${DateTime.now().millisecondsSinceEpoch}.jpg',
+        contentType: MediaType('image', 'jpeg'),
+      ),
+    });
+
+    print('DEBUG WEB: Uploading image...');
+    print('DEBUG WEB: File size: ${fileSizeInMB.toStringAsFixed(2)}MB');
+    
+    final response = await _dio.post(
+      '/upload/post-image',
+      data: formData,
+      options: Options(
+        headers: {
+          'Authorization': 'Bearer $token',
+        },
+      ),
+    );
+
+    print('DEBUG WEB: Upload response status: ${response.statusCode}');
+    print('DEBUG WEB: Upload response body: ${response.data}');
+
+    if (response.statusCode == 200 && response.data['success'] == true) {
+      return response.data['image_url'];
+    } else {
+      throw Exception('Upload failed: ${response.data}');
+    }
+  } catch (e) {
+    print('ERROR WEB: Upload failed: $e');
+    throw Exception('Web upload failed: $e');
+  }
+}
+
+  Future<String?> uploadPostImageFromXFile(XFile imageFile) async {
+  if (kIsWeb) {
+    return uploadPostImageWeb(imageFile);
+  } else {
+    // Untuk mobile, convert XFile ke File
+    final File file = File(imageFile.path);
+    return uploadPostImage(file);
+  }
+}
+
 
   Future<List<Post>> getPosts({int limit = 20, int offset = 0}) async {
     try {
@@ -239,26 +369,58 @@ class ApiService {
   }
 
   Future<Post?> createPost(String content, {String? imageUrl}) async {
-    try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/posts'),
-        headers: await _getHeaders(needsAuth: true),
-        body: json.encode({
-          'content': content,
-          'image_url': imageUrl,
-        }),
-      );
-
-      final data = _handleResponse(response);
-      if (data != null && data['success'] == true) {
-        return Post.fromMap(data['post']);
-      }
-      return null;
-    } catch (e) {
-      print('Create post error: $e');
-      return null;
+  try {
+    // PERBAIKAN: Validasi content tidak boleh kosong
+    String finalContent = content.trim();
+    if (finalContent.isEmpty && imageUrl != null) {
+      finalContent = "📷"; // Default content untuk post dengan gambar saja
     }
+    
+    if (finalContent.isEmpty && imageUrl == null) {
+      throw Exception('Content atau image harus ada');
+    }
+    
+    print('DEBUG API: Creating post with content: "$finalContent"');
+    print('DEBUG API: Image URL: $imageUrl');
+    
+    // Buat body request
+    Map<String, dynamic> requestBody = {
+      'content': finalContent,
+    };
+    
+    // Tambahkan image_url jika ada
+    if (imageUrl != null && imageUrl.isNotEmpty) {
+      requestBody['image_url'] = imageUrl;
+    }
+    
+    print('DEBUG API: Request body: $requestBody');
+    
+    final response = await http.post(
+      Uri.parse('$baseUrl/posts'),
+      headers: await _getHeaders(needsAuth: true),
+      body: json.encode(requestBody),
+    );
+
+    print('DEBUG API: Response status: ${response.statusCode}');
+    print('DEBUG API: Response body: ${response.body}');
+
+    final data = _handleResponse(response);
+    if (data != null && data['success'] == true) {
+      return Post.fromMap(data['post']);
+    }
+    
+    // Jika gagal, throw error dengan pesan yang lebih detail
+    if (response.statusCode == 400) {
+      final errorData = json.decode(response.body);
+      throw Exception(errorData['error'] ?? 'Bad request');
+    }
+    
+    return null;
+  } catch (e) {
+    print('Create post error: $e');
+    rethrow; // Re-throw agar error bisa ditangkap di caller
   }
+}
 
   Future<bool> likePost(int postId) async {
     try {
@@ -296,42 +458,84 @@ class ApiService {
     }
   }
 
-  Future<Reply?> replyToPost(int postId, String content) async {
+  Future<Reply?> replyToPost(
+    int postId,
+    String content, {
+    String? imageUrl,
+  }) async {
     try {
+      final token = await _getAuthToken();
+      if (token == null) {
+        throw Exception('No authentication token found');
+      }
+
       final response = await http.post(
         Uri.parse('$baseUrl/posts/$postId/replies'),
         headers: await _getHeaders(needsAuth: true),
         body: json.encode({
           'content': content,
+          if (imageUrl != null) 'image_url': imageUrl,
         }),
       );
+
+      print('Reply response status: ${response.statusCode}');
+      print('Reply response body: ${response.body}');
 
       final data = _handleResponse(response);
       if (data != null && data['success'] == true) {
         return Reply.fromMap(data['reply']);
+      } else {
+        final errorData = json.decode(response.body);
+        throw Exception(errorData['error'] ?? 'Failed to post reply');
       }
-      return null;
     } catch (e) {
-      print('Reply post error: $e');
-      return null;
+      print('Error posting reply: $e');
+      throw Exception('Reply failed: $e');
     }
   }
 
   Future<List<Reply>> getReplies(int postId) async {
     try {
+      print('=== DEBUG getReplies ===');
+      print('Post ID: $postId');
+      print('API URL: $baseUrl/posts/$postId/replies');
+
       final response = await http.get(
         Uri.parse('$baseUrl/posts/$postId/replies'),
         headers: await _getHeaders(),
       );
 
+      print('Response status: ${response.statusCode}');
+      print('Response body length: ${response.body.length}');
+
       final data = _handleResponse(response);
       if (data != null && data['success'] == true) {
         final repliesData = data['replies'] as List;
-        return repliesData.map((replyData) => Reply.fromMap(replyData)).toList();
+        print('Raw replies data count: ${repliesData.length}');
+
+        List<Reply> replies = [];
+        for (int i = 0; i < repliesData.length; i++) {
+          try {
+            final reply = Reply.fromMap(repliesData[i]);
+            replies.add(reply);
+            print('Successfully parsed reply $i: ${reply.content}');
+          } catch (e) {
+            print('Failed to parse reply $i: $e');
+            print('Reply data: ${repliesData[i]}');
+            // Skip yang error, jangan stop seluruh proses
+            continue;
+          }
+        }
+
+        print('Final parsed replies count: ${replies.length}');
+        return replies;
+      } else {
+        print('API response unsuccessful or null');
+        return [];
       }
-      return [];
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('Get replies error: $e');
+      print('StackTrace: $stackTrace');
       return [];
     }
   }
@@ -393,7 +597,8 @@ class ApiService {
     }
   }
 
-  Future<User?> updateUserProfile(int userId, {
+  Future<User?> updateUserProfile(
+    int userId, {
     String? name,
     String? bio,
     String? location,
@@ -586,7 +791,9 @@ class ApiService {
       final data = _handleResponse(response);
       if (data != null && data['success'] == true) {
         final notificationsData = data['notifications'] as List;
-        return notificationsData.map((notificationData) => XNotification.fromMap(notificationData)).toList();
+        return notificationsData
+            .map((notificationData) => XNotification.fromMap(notificationData))
+            .toList();
       }
       return [];
     } catch (e) {
@@ -636,7 +843,9 @@ class ApiService {
       final data = _handleResponse(response);
       if (data != null && data['success'] == true) {
         final messagesData = data['messages'] as List;
-        return messagesData.map((messageData) => Message.fromMap(messageData)).toList();
+        return messagesData
+            .map((messageData) => Message.fromMap(messageData))
+            .toList();
       }
       return [];
     } catch (e) {
@@ -645,7 +854,10 @@ class ApiService {
     }
   }
 
-  Future<List<Message>> getConversationMessages(int userId, int otherUserId) async {
+  Future<List<Message>> getConversationMessages(
+    int userId,
+    int otherUserId,
+  ) async {
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/users/$userId/messages/$otherUserId'),
@@ -655,7 +867,9 @@ class ApiService {
       final data = _handleResponse(response);
       if (data != null && data['success'] == true) {
         final messagesData = data['messages'] as List;
-        return messagesData.map((messageData) => Message.fromMap(messageData)).toList();
+        return messagesData
+            .map((messageData) => Message.fromMap(messageData))
+            .toList();
       }
       return [];
     } catch (e) {
@@ -669,10 +883,7 @@ class ApiService {
       final response = await http.post(
         Uri.parse('$baseUrl/messages'),
         headers: await _getHeaders(needsAuth: true),
-        body: json.encode({
-          'receiver_id': receiverId,
-          'content': content,
-        }),
+        body: json.encode({'receiver_id': receiverId, 'content': content}),
       );
 
       final data = _handleResponse(response);
